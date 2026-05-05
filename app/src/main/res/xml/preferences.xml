@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <PreferenceCategory android:title="@string/pref_input_mode">
+        <ListPreference
+            android:key="input_mode"
+            android:title="@string/pref_input_mode"
+            android:entries="@array/input_mode_entries"
+            android:entryValues="@array/input_mode_values"
+            android:defaultValue="pinyin" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="键盘">
+        <SeekBarPreference
+            android:key="keyboard_height"
+            android:title="@string/pref_keyboard_height"
+            android:min="50"
+            android:max="150"
+            android:defaultValue="100" />
+        <SwitchPreferenceCompat
+            android:key="key_sound"
+            android:title="@string/pref_sound"
+            android:defaultValue="true" />
+        <SwitchPreferenceCompat
+            android:key="key_vibrate"
+            android:title="@string/pref_vibrate"
+            android:defaultValue="true" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="隐私">
+        <Preference
+            android:key="privacy"
+            android:title="@string/pref_privacy"
+            android:summary="@string/pref_privacy_summary"
+            android:selectable="false" />
+    </PreferenceCategory>
+
+</PreferenceScreen>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="input_mode_entries">
+        <item>@string/pref_pinyin</item>
+        <item>@string/pref_wubi</item>
+        <item>@string/pref_english</item>
+    </string-array>
+    <string-array name="input_mode_values">
+        <item>pinyin</item>
+        <item>wubi</item>
+        <item>english</item>
+    </string-array>
+</resources>

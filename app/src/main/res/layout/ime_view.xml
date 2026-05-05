@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#F0F0F5">
+
+    <com.moqi.im.keyboard.CandidateView
+        android:id="@+id/candidate_view"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:layout_alignParentTop="true" />
+
+    <com.moqi.im.keyboard.ComposeView
+        android:id="@+id/compose_view"
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:layout_below="@id/candidate_view"
+        android:background="#FAFAFC"
+        android:gravity="center_vertical"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:textSize="15sp"
+        android:textColor="#1A1A2E" />
+
+    <com.moqi.im.keyboard.KeyboardView
+        android:id="@+id/keyboard_view"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/compose_view"
+        android:layout_alignParentBottom="true" />
+
+</RelativeLayout>

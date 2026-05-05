@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">墨奇输入法</string>
+    <string name="subtype_pinyin">拼音</string>
+    <string name="subtype_wubi">五笔</string>
+    <string name="subtype_english">English</string>
+    <string name="subtype_voice">语音</string>
+    <string name="label_compose">输入区</string>
+    <string name="label_candidates">候选词</string>
+    <string name="hint_compose">输入拼音或五笔编码</string>
+    <string name="settings_title">设置</string>
+    <string name="pref_input_mode">输入模式</string>
+    <string name="pref_pinyin">拼音输入</string>
+    <string name="pref_wubi">五笔输入</string>
+    <string name="pref_english">英文输入</string>
+    <string name="pref_voice">语音输入</string>
+    <string name="pref_keyboard_height">键盘高度</string>
+    <string name="pref_sound">按键音效</string>
+    <string name="pref_vibrate">按键振动</string>
+    <string name="pref_privacy">隐私声明</string>
+    <string name="pref_privacy_summary">墨奇输入法所有数据均在本地处理，不会上传任何用户数据。</string>
+    <string name="voice_listening">请说话…</string>
+    <string name="voice_error">语音识别失败，请重试</string>
+</resources>

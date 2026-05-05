@@ -1,0 +1,26 @@
+<resources>
+    <style name="Theme.MoqiIM" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#E0E0E8</item>
+        <item name="colorPrimaryVariant">#16213E</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#536890</item>
+        <item name="colorSurface">#1A1A2E</item>
+        <item name="colorOnSurface">#E0E0E8</item>
+    </style>
+
+    <style name="MoqiKeyboard" parent="android:Theme.DeviceDefault">
+        <item name="android:background">#1A1A2E</item>
+    </style>
+
+    <style name="MoquiKeyStyle">
+        <item name="android:background">@drawable/key_bg_dark</item>
+        <item name="android:textColor">#E0E0E8</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+    <style name="MoqiCandidateStyle">
+        <item name="android:textColor">#E0E0E8</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+</resources>

@@ -1,0 +1,6 @@
+<resources>
+    <dimen name="keyboard_height">260dp</dimen>
+    <dimen name="candidate_height">36dp</dimen>
+    <dimen name="compose_height">32dp</dimen>
+    <dimen name="key_height">44dp</dimen>
+</resources>
