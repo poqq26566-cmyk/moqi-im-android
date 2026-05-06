@@ -9,7 +9,7 @@ import android.view.MotionEvent
 import android.view.View
 import com.moqi.im.R
 
-class CandidateView @Suppress("unused") constructor(
+class CandidateView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0

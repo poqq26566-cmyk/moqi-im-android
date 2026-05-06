@@ -10,7 +10,7 @@ import android.view.MotionEvent
 import android.view.View
 import com.moqi.im.R
 
-class KeyboardView @Suppress("unused") constructor(
+class KeyboardView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
