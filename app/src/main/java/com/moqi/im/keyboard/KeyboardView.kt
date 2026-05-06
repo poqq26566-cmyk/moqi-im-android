@@ -99,11 +99,6 @@ class KeyboardView @JvmOverloads constructor(
         super.onDraw(canvas)
         updatePaintColors()
 
-        if (currentLayout == Layout.VOICE) {
-            drawVoiceMode(canvas)
-            return
-        }
-
         for ((rowIdx, row) in keyRects.withIndex()) {
             for ((colIdx, rect) in row.withIndex()) {
                 val key = rows.getOrNull(rowIdx)?.getOrNull(colIdx) ?: continue
