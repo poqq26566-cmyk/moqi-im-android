@@ -11,6 +11,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // JitPack for Sherpa-onnx: maven { url = uri("https://jitpack.io") }
     }
 }
 

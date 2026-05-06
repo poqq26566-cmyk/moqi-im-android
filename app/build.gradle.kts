@@ -15,6 +15,14 @@ android {
         versionName = "0.1.0"
     }
 
+    sourceSets {
+        getByName("main") {
+            assets {
+                srcDirs("src/main/assets", "src/main/models")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -38,4 +46,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // Sherpa-onnx 本地语音识别（需要手动下载模型）
+    // implementation("com.github.k2-fsa:sherpa-onnx:v1.12.1")
 }

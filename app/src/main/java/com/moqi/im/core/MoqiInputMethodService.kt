@@ -1,9 +1,13 @@
 package com.moqi.im.core
 
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.speech.RecognitionListener
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.view.KeyEvent
@@ -14,11 +18,15 @@ import android.widget.FrameLayout
 import com.moqi.im.engine.EngineFactory
 import com.moqi.im.engine.InputEngine
 import com.moqi.im.engine.InputMode
-import com.moqi.im.engine.VoiceEngine
+import com.moqi.im.engine.SherpaVoiceEngine
 import com.moqi.im.keyboard.CandidateView
 import com.moqi.im.keyboard.ComposeView
 import com.moqi.im.keyboard.KeyCode
 import com.moqi.im.keyboard.KeyboardView
+import com.moqi.im.voice.ModelManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MoqiInputMethodService : InputMethodService() {
 
@@ -59,7 +67,7 @@ class MoqiInputMethodService : InputMethodService() {
     private var shiftLocked: Boolean = false
     private var isT9Mode: Boolean = false
     private var modeBeforeVoice: InputMode = InputMode.PINYIN
-    private var voiceEngine: VoiceEngine? = null
+    private var sherpaVoiceEngine: SherpaVoiceEngine? = null
     private var isListening: Boolean = false
 
     private val handler = Handler(Looper.getMainLooper())
@@ -311,40 +319,54 @@ class MoqiInputMethodService : InputMethodService() {
         startVoiceListening()
     }
 
+    @SuppressLint("NewApi")
     private fun startVoiceListening() {
-        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestRecordAudioPermission()
             return
         }
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            composeView?.setComposingText("设备不支持语音识别")
-            handler.postDelayed({ exitVoiceMode() }, 1500)
+
+        // 检查模型是否已下载（Sherpa-onnx 需要手动下载模型）
+        if (!ModelManager.isModelReady(this)) {
+            composeView?.setComposingText("语音模型未下载")
+            handler.postDelayed({ exitVoiceMode() }, 2000)
             return
         }
-        stopVoiceListening()
-        voiceEngine = VoiceEngine()
-        voiceEngine?.initialize(this,
+
+        // 初始化 SherpaVoiceEngine
+        if (sherpaVoiceEngine == null) {
+            sherpaVoiceEngine = SherpaVoiceEngine(this)
+        }
+
+        isListening = true
+        composeView?.setComposingText("正在聆听...")
+        
+        sherpaVoiceEngine?.startListening(
             onResult = { text ->
-                isListening = false
-                currentInputConnection.commitText(text, 1)
-                exitVoiceMode()
+                if (text == "[完成]") {
+                    isListening = false
+                    currentInputConnection.commitText(composingText.toString(), 1)
+                    composingText.clear()
+                    exitVoiceMode()
+                } else {
+                    composingText.clear()
+                    composingText.append(text)
+                    updateComposeView()
+                }
             },
             onError = {
                 isListening = false
-                composeView?.setComposingText("语音识别失败，请重试")
+                composeView?.setComposingText("语音识别失败")
                 handler.postDelayed({ exitVoiceMode() }, 1500)
             }
         )
-        voiceEngine?.startListening(this)
-        isListening = true
-        composeView?.setComposingText("正在聆听...")
     }
 
-    @android.annotation.SuppressLint("NewApi")
+    @SuppressLint("NewApi")
     private fun requestRecordAudioPermission() {
-        val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = android.net.Uri.fromParts("package", packageName, null)
-            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
         composeView?.setComposingText("请授权麦克风权限后重试")
@@ -352,9 +374,9 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun stopVoiceListening() {
-        voiceEngine?.stopListening()
-        voiceEngine?.destroy()
-        voiceEngine = null
+        sherpaVoiceEngine?.stopListening()
+        sherpaVoiceEngine?.destroy()
+        sherpaVoiceEngine = null
         isListening = false
     }
 
@@ -370,6 +392,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun switchMode(mode: InputMode) {
+        if (currentMode == InputMode.VOICE) stopVoiceListening()
         currentMode = mode
         engine = EngineFactory.create(mode)
         composingText.clear()
@@ -471,8 +494,8 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun launchSettings() {
-        val intent = android.content.Intent(this, com.moqi.im.settings.SettingsActivity::class.java)
-        intent.flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+        val intent = Intent(this, com.moqi.im.settings.SettingsActivity::class.java)
+        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         startActivity(intent)
     }
 
@@ -480,6 +503,8 @@ class MoqiInputMethodService : InputMethodService() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
         stopVoiceListening()
+        sherpaVoiceEngine?.destroy()
+        sherpaVoiceEngine = null
         keyboardView = null
         candidateView = null
         composeView = null
