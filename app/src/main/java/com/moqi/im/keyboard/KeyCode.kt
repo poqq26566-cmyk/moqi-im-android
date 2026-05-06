@@ -24,4 +24,5 @@ object KeyCode {
     const val T9_POUND = -212
     const val SWITCH_TO_QWERTY = -301
     const val SWITCH_TO_T9 = -302
+    const val EXIT_VOICE = -303
 }

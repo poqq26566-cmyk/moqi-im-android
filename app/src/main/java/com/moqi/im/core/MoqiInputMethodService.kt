@@ -54,6 +54,7 @@ class MoqiInputMethodService : InputMethodService() {
     private var shiftActive: Boolean = false
     private var shiftLocked: Boolean = false
     private var isT9Mode: Boolean = false
+    private var modeBeforeVoice: InputMode = InputMode.PINYIN
 
     private val handler = Handler(Looper.getMainLooper())
     private var t9TapCount: Int = 0
@@ -117,12 +118,23 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.ENTER -> handleEnter()
             KeyCode.SPACE -> handleSpace()
             KeyCode.SHIFT -> handleShift()
-            KeyCode.MODE_SWITCH -> handleModeSwitch()
-            KeyCode.VOICE -> handleVoiceInput()
+            KeyCode.MODE_SWITCH -> cycleInputMode()
+            KeyCode.VOICE -> enterVoiceMode()
+            KeyCode.EXIT_VOICE -> exitVoiceMode()
             KeyCode.COMMA -> commitText("，")
             KeyCode.PERIOD -> commitText("。")
-            KeyCode.SWITCH_TO_QWERTY -> { isT9Mode = false; updateKeyboard(); resetT9State() }
-            KeyCode.SWITCH_TO_T9 -> { isT9Mode = true; updateKeyboard(); resetT9State() }
+            KeyCode.SWITCH_TO_QWERTY -> {
+            isT9Mode = false
+            if (currentMode == InputMode.VOICE) currentMode = modeBeforeVoice
+            updateKeyboard()
+            resetT9State()
+        }
+            KeyCode.SWITCH_TO_T9 -> {
+            isT9Mode = true
+            if (currentMode == InputMode.VOICE) currentMode = modeBeforeVoice
+            updateKeyboard()
+            resetT9State()
+        }
             in KeyCode.T9_1..KeyCode.T9_POUND -> handleT9Key(keyCode)
             else -> {
                 val ch = keyCodeToChar(keyCode, isShifted || shiftActive)
@@ -265,14 +277,20 @@ class MoqiInputMethodService : InputMethodService() {
         keyboardView?.setShifted(shiftActive || shiftLocked)
     }
 
-    private fun handleModeSwitch() {
-        val modes = InputMode.entries
-        val nextIndex = (modes.indexOf(currentMode) + 1) % modes.size
-        switchMode(modes[nextIndex])
+    private fun cycleInputMode() {
+        val textModes = listOf(InputMode.PINYIN, InputMode.WUBI, InputMode.ENGLISH)
+        val currentTextMode = if (currentMode == InputMode.VOICE) modeBeforeVoice else currentMode
+        val nextIndex = (textModes.indexOf(currentTextMode) + 1) % textModes.size
+        switchMode(textModes[nextIndex])
     }
 
-    private fun handleVoiceInput() {
+    private fun enterVoiceMode() {
+        modeBeforeVoice = if (currentMode == InputMode.VOICE) modeBeforeVoice else currentMode
         switchMode(InputMode.VOICE)
+    }
+
+    private fun exitVoiceMode() {
+        switchMode(modeBeforeVoice)
     }
 
     private fun switchMode(mode: InputMode) {

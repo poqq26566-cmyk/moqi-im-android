@@ -52,7 +52,7 @@ class KeyboardView @JvmOverloads constructor(
             Layout.QWERTY_EN -> qwertyEnRows()
             Layout.T9_CN -> t9CnRows()
             Layout.T9_EN -> t9EnRows()
-            Layout.VOICE -> emptyList()
+            Layout.VOICE -> voiceRows()
         }
         requestLayout()
         invalidate()
@@ -68,9 +68,7 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     fun showVoiceMode() {
-        currentLayout = Layout.VOICE
-        rows = emptyList()
-        invalidate()
+        setLayout(Layout.VOICE)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -158,16 +156,7 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun drawVoiceMode(canvas: Canvas) {
-        val cx = width / 2f
-        val cy = height / 2f
-        val dark = isDarkMode
-
-        val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-            textSize = 32f
-            textAlign = Paint.Align.CENTER
-        }
-        canvas.drawText(context.getString(R.string.voice_listening), cx, cy, hintPaint)
+        // Voice layout is now rendered as keys, not custom drawing
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -340,4 +329,19 @@ class KeyboardView @JvmOverloads constructor(
         in '0'..'9' -> KeyEvent.KEYCODE_0 + (ch - '0')
         else -> ch.code
     }
+
+    private fun voiceRows(): List<List<KeyDefinition>> = listOf(
+        listOf(
+            KeyDefinition("返回键盘", KeyCode.EXIT_VOICE, 3f),
+            KeyDefinition("🎤", KeyCode.VOICE, 3f),
+            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 3f)
+        ),
+        listOf(
+            KeyDefinition("拼音", KeyCode.EXIT_VOICE, 1.5f),
+            KeyDefinition("五笔", KeyCode.MODE_SWITCH, 1.5f),
+            KeyDefinition("英文", KeyCode.MODE_SWITCH, 1.5f),
+            KeyDefinition("9键", KeyCode.SWITCH_TO_T9, 1.5f),
+            KeyDefinition("↵", KeyCode.ENTER, 1.5f)
+        )
+    )
 }
