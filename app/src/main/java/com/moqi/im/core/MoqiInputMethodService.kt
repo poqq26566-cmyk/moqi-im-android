@@ -16,6 +16,8 @@ import com.moqi.im.keyboard.KeyboardView
 
 class MoqiInputMethodService : InputMethodService() {
 
+    override fun onEvaluateFullscreenMode(): Boolean = false
+
     private var currentMode: InputMode = InputMode.PINYIN
     private var engine: InputEngine = EngineFactory.create(InputMode.PINYIN)
     private var composingText: StringBuilder = StringBuilder()
