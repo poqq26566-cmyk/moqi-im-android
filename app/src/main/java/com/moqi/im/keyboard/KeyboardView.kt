@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import com.moqi.im.R
@@ -138,7 +139,7 @@ class KeyboardView @Suppress("unused") constructor(
 
         val textPaint = if (isSpecialKey(key)) specialKeyPaint else labelPaint
         val text = if (isSpecialKey(key)) key.label else {
-            if (isShifted && key.keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z) {
+            if (isShifted && key.keyCode >= KeyEvent.KEYCODE_A && key.keyCode <= KeyEvent.KEYCODE_Z) {
                 key.label.uppercase()
             } else {
                 key.label

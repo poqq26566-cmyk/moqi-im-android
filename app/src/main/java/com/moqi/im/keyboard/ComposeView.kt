@@ -38,7 +38,7 @@ class ComposeView @Suppress("unused") constructor(
         super.onDraw(canvas)
         if (composingText.isNotEmpty()) {
             val padding = 12f * resources.displayMetrics.density
-            canvas.drawText(composingText, padding, height / 2f - textPaint.fontMetrics.ascent / 2 + textPaint.descent / 3, textPaint)
+            canvas.drawText(composingText, padding, height / 2f - textPaint.fontMetrics.ascent / 2 + textPaint.fontMetrics.descent / 3, textPaint)
         }
     }
 }
