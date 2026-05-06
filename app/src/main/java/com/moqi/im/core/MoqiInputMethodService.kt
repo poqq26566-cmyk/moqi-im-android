@@ -30,14 +30,16 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     override fun onConfigureWindow(win: android.view.Window, isFullscreen: Boolean, isCandidatesOnly: Boolean) {
-        win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        win.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
     override fun setInputView(view: View) {
         super.setInputView(view)
-        val inputArea = window.findViewById<FrameLayout>(android.R.id.inputArea)
-        inputArea?.layoutParams?.height = ViewGroup.LayoutParams.MATCH_PARENT
-        view.layoutParams?.height = ViewGroup.LayoutParams.MATCH_PARENT
+        val screenHeight = resources.displayMetrics.heightPixels
+        val imeHeight = (screenHeight * 0.35).toInt()
+        view.layoutParams?.height = imeHeight
+        val inputArea = window?.window?.decorView?.findViewById<FrameLayout>(android.R.id.inputArea)
+        inputArea?.layoutParams?.height = imeHeight
     }
 
     private var currentMode: InputMode = InputMode.PINYIN
