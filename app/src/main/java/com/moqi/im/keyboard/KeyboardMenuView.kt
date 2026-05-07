@@ -70,9 +70,9 @@ class KeyboardMenuView @JvmOverloads constructor(
         addSection("常用")
         addGrid(
             listOf(
-                Action("语音输入") { callback?.onVoiceInput() },
                 Action("输入法设置") { callback?.onOpenSettings() },
                 Action("切换输入法") { callback?.onInputMethodPicker() },
+                Action("长按空格语音") { callback?.onBack() },
                 Action("键盘") { callback?.onBack() }
             )
         )

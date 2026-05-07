@@ -39,9 +39,12 @@ class KeyboardView @JvmOverloads constructor(
     private var touchStartX: Float = 0f
     private var touchStartY: Float = 0f
     private var swipeTriggered: Boolean = false
+    private var spaceLongPressRunnable: Runnable? = null
+    private var spaceLongPressTriggered: Boolean = false
 
     private var isShifted: Boolean = false
     private var onKeyListener: ((Int, Boolean, String?) -> Unit)? = null
+    private var onSpaceLongPressListener: ((Boolean) -> Unit)? = null
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -73,6 +76,10 @@ class KeyboardView @JvmOverloads constructor(
         onKeyListener = listener
     }
 
+    fun setOnSpaceLongPressListener(listener: (Boolean) -> Unit) {
+        onSpaceLongPressListener = listener
+    }
+
     fun showVoiceMode() {
         setLayout(Layout.VOICE)
     }
@@ -82,11 +89,7 @@ class KeyboardView @JvmOverloads constructor(
         val desiredHeight = MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 }
             ?: (resources.displayMetrics.heightPixels * 0.28f).toInt()
         keyGap = (width * 0.006f).coerceAtLeast(4f * resources.displayMetrics.density)
-        val rowCount = when (currentLayout) {
-            Layout.T9_CN, Layout.T9_EN -> 6
-            Layout.VOICE -> 2
-            else -> 4
-        }
+        val rowCount = rows.size.coerceAtLeast(1)
         keyHeight = (desiredHeight - keyGap * (rowCount + 1)) / rowCount
 
         calculateKeyRects(width)
@@ -169,6 +172,7 @@ class KeyboardView @JvmOverloads constructor(
                 swipeTriggered = false
                 pressedKey = hit
                 startKeyRepeatIfNeeded(hit)
+                startSpaceLongPressIfNeeded(hit)
                 invalidate()
                 return true
             }
@@ -179,24 +183,28 @@ class KeyboardView @JvmOverloads constructor(
                 }
                 val hit = findKeyAt(event.x, event.y)
                 if (hit == pressedKey) return true
+                stopSpaceLongPress(endVoice = true)
                 stopKeyRepeat()
                 pressedKey = hit
                 startKeyRepeatIfNeeded(hit)
+                startSpaceLongPressIfNeeded(hit)
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_UP -> {
                 val repeatWasActive = repeatRunnable != null
+                val spaceLongPressWasActive = spaceLongPressTriggered
                 val startKey = touchStartKey
                 if (swipeTriggered && startKey != null) {
                     dispatchSwipeKey(startKey)
-                } else {
+                } else if (!spaceLongPressWasActive) {
                     pressedKey?.let { keyPos ->
                         if (!repeatWasActive) {
                             dispatchKey(keyPos)
                         }
                     }
                 }
+                stopSpaceLongPress(endVoice = spaceLongPressWasActive)
                 clearTouchTracking()
                 stopKeyRepeat()
                 pressedKey = null
@@ -205,6 +213,7 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                stopSpaceLongPress(endVoice = spaceLongPressTriggered)
                 clearTouchTracking()
                 stopKeyRepeat()
                 pressedKey = null
@@ -235,6 +244,7 @@ class KeyboardView @JvmOverloads constructor(
             swipeTriggered = true
             pressedKey = startKey
             stopKeyRepeat()
+            stopSpaceLongPress(endVoice = spaceLongPressTriggered)
             return true
         }
         return false
@@ -273,6 +283,29 @@ class KeyboardView @JvmOverloads constructor(
         repeatRunnable?.let { removeCallbacks(it) }
         repeatRunnable = null
         repeatingKey = null
+    }
+
+    private fun startSpaceLongPressIfNeeded(keyPos: Pair<Int, Int>?) {
+        stopSpaceLongPress(endVoice = false)
+        val key = keyPos?.let { keyAt(it) } ?: return
+        if (key.keyCode != KeyCode.SPACE || key.isRepeatable) return
+        spaceLongPressTriggered = false
+        spaceLongPressRunnable = Runnable {
+            if (pressedKey == keyPos && touchStartKey == keyPos) {
+                spaceLongPressTriggered = true
+                onSpaceLongPressListener?.invoke(true)
+            }
+        }
+        postDelayed(spaceLongPressRunnable!!, SPACE_LONG_PRESS_DELAY_MS)
+    }
+
+    private fun stopSpaceLongPress(endVoice: Boolean) {
+        spaceLongPressRunnable?.let { removeCallbacks(it) }
+        spaceLongPressRunnable = null
+        if (endVoice) {
+            onSpaceLongPressListener?.invoke(false)
+        }
+        spaceLongPressTriggered = false
     }
 
     private fun dispatchKey(keyPos: Pair<Int, Int>) {
@@ -320,6 +353,7 @@ class KeyboardView @JvmOverloads constructor(
     companion object {
         private const val KEY_REPEAT_INITIAL_DELAY_MS = 350L
         private const val KEY_REPEAT_INTERVAL_MS = 70L
+        private const val SPACE_LONG_PRESS_DELAY_MS = 280L
         private const val SWIPE_INPUT_THRESHOLD_DP = 36f
     }
 
@@ -363,12 +397,11 @@ class KeyboardView @JvmOverloads constructor(
         ),
         listOf(
             KeyDefinition("，", KeyCode.COMMA, 1f),
-            KeyDefinition("空格", KeyCode.SPACE, 1f),
+            KeyDefinition("空格 🎤", KeyCode.SPACE, 1f),
             KeyDefinition("。", KeyCode.PERIOD, 1f)
         ),
         listOf(
-            KeyDefinition("🎤", KeyCode.VOICE, 1f),
-            KeyDefinition("ABC", KeyCode.SWITCH_TO_QWERTY, 1f),
+            KeyDefinition("...", KeyCode.MENU, 1f),
             KeyDefinition("↵", KeyCode.ENTER, 1f)
         )
     )
@@ -396,12 +429,11 @@ class KeyboardView @JvmOverloads constructor(
         ),
         listOf(
             KeyDefinition(",", KeyCode.COMMA, 1f),
-            KeyDefinition("Space", KeyCode.SPACE, 1f),
+            KeyDefinition("Space 🎤", KeyCode.SPACE, 1f),
             KeyDefinition(".", KeyCode.PERIOD, 1f)
         ),
         listOf(
-            KeyDefinition("🎤", KeyCode.VOICE, 1f),
-            KeyDefinition("键盘", KeyCode.SWITCH_TO_QWERTY, 1f),
+            KeyDefinition("...", KeyCode.MENU, 1f),
             KeyDefinition("↵", KeyCode.ENTER, 1f)
         )
     )
@@ -447,20 +479,18 @@ class KeyboardView @JvmOverloads constructor(
     private fun bottomRowCn(): List<KeyDefinition> = listOf(
         KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.5f),
         KeyDefinition("，", KeyCode.COMMA, 1f),
-        KeyDefinition("空格", KeyCode.SPACE, 5f),
+        KeyDefinition("空格 🎤", KeyCode.SPACE, 6f),
         KeyDefinition("。", KeyCode.PERIOD, 1f),
         KeyDefinition("...", KeyCode.MENU, 1f),
-        KeyDefinition("9键", KeyCode.SWITCH_TO_T9, 1f),
         KeyDefinition("↵", KeyCode.ENTER, 1.5f)
     )
 
     private fun bottomRowEn(): List<KeyDefinition> = listOf(
         KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.5f),
         KeyDefinition(",", KeyCode.COMMA, 1f),
-        KeyDefinition("Space", KeyCode.SPACE, 5f),
+        KeyDefinition("Space 🎤", KeyCode.SPACE, 6f),
         KeyDefinition(".", KeyCode.PERIOD, 1f),
         KeyDefinition("...", KeyCode.MENU, 1f),
-        KeyDefinition("9键", KeyCode.SWITCH_TO_T9, 1f),
         KeyDefinition("↵", KeyCode.ENTER, 1.5f)
     )
 
@@ -474,11 +504,10 @@ class KeyboardView @JvmOverloads constructor(
         listOf(
             KeyDefinition("返回键盘", KeyCode.EXIT_VOICE, 4f),
             KeyDefinition("中/英", KeyCode.MODE_SWITCH, 4f),
-            KeyDefinition("9键", KeyCode.SWITCH_TO_T9, 4f)
+            KeyDefinition("...", KeyCode.MENU, 4f)
         ),
         listOf(
-            KeyDefinition("26键", KeyCode.SWITCH_TO_QWERTY, 1.5f),
-            KeyDefinition("🎤 语音输入", KeyCode.VOICE, 4f),
+            KeyDefinition("长按空格语音", KeyCode.EXIT_VOICE, 4f),
             KeyDefinition("↵", KeyCode.ENTER, 1.5f)
         )
     )

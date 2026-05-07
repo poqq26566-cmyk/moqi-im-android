@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.View
 
 class ComposeView @JvmOverloads constructor(
@@ -16,7 +17,7 @@ class ComposeView @JvmOverloads constructor(
     private var composingText: String = ""
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 15f * resources.displayMetrics.scaledDensity
+        textSize = sp(15f)
         textAlign = Paint.Align.LEFT
     }
     private val bubblePaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -54,4 +55,10 @@ class ComposeView @JvmOverloads constructor(
             canvas.drawText(composingText, rect.left + horizontalPadding, baseline, textPaint)
         }
     }
+
+    private fun sp(value: Float): Float = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        value,
+        resources.displayMetrics
+    )
 }

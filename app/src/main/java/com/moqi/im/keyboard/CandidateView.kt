@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
 import com.moqi.im.R
@@ -17,11 +18,11 @@ class CandidateView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 23f * resources.displayMetrics.scaledDensity
+        textSize = sp(23f)
         textAlign = Paint.Align.LEFT
     }
     private val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 16f * resources.displayMetrics.scaledDensity
+        textSize = sp(16f)
         textAlign = Paint.Align.LEFT
     }
     private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -52,7 +53,7 @@ class CandidateView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun getFirstCandidate(): String? = candidates.firstOrNull()
+    fun getFirstCandidate(): String? = candidates.firstOrNull()?.text
 
     fun setOnCandidateSelectedListener(listener: (String) -> Unit) {
         onCandidateSelected = listener
@@ -103,7 +104,7 @@ class CandidateView @JvmOverloads constructor(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val h = resources.getDimension(R.dimen.candidate_height)
-        calculateItemRects(width)
+        calculateItemRects(width, h)
         setMeasuredDimension(width, h.toInt())
     }
 
@@ -118,7 +119,7 @@ class CandidateView @JvmOverloads constructor(
                 val idx = findItemAt(event.x)
                 if (idx in candidates.indices && idx == pressedIndex) {
                     onCandidateIndexSelected?.invoke(idx)
-                    onCandidateSelected?.invoke(candidates[idx])
+                    onCandidateSelected?.invoke(candidates[idx].text)
                 }
                 pressedIndex = -1
                 invalidate()
@@ -133,7 +134,7 @@ class CandidateView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    private fun calculateItemRects(totalWidth: Int) {
+    private fun calculateItemRects(totalWidth: Int, totalHeight: Float = height.toFloat()) {
         val padding = dp(4f)
         var x = padding
         itemRects = candidates.map { candidate ->
@@ -141,7 +142,7 @@ class CandidateView @JvmOverloads constructor(
                 textPaint.measureText(candidate.text) +
                 if (candidate.comment.isBlank()) 0f else dp(10f) + commentPaint.measureText(candidate.comment)
             val itemWidth = desiredWidth.coerceIn(dp(72f), totalWidth * 0.42f)
-            RectF(x, 0f, x + itemWidth, height.toFloat()).also {
+            RectF(x, 0f, x + itemWidth, totalHeight).also {
                 x += itemWidth
             }
         }
@@ -155,6 +156,12 @@ class CandidateView @JvmOverloads constructor(
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
+
+    private fun sp(value: Float): Float = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        value,
+        resources.displayMetrics
+    )
 
     companion object {
         private const val DARK_BG = 0xFF20262C.toInt()

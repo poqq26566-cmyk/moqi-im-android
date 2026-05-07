@@ -81,6 +81,7 @@ class MoqiInputMethodService : InputMethodService() {
     private var modeBeforeVoice: InputMode = InputMode.PINYIN
     private var sherpaVoiceEngine: SherpaVoiceEngine? = null
     private var isListening: Boolean = false
+    private var isSpaceVoiceHoldActive: Boolean = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val downloadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -126,6 +127,13 @@ class MoqiInputMethodService : InputMethodService() {
                 handleSwipeText(swipeText)
             } else {
                 handleKey(keyCode, isShifted)
+            }
+        }
+        keyboardView?.setOnSpaceLongPressListener { pressed ->
+            if (pressed) {
+                startSpaceVoiceHold()
+            } else {
+                stopSpaceVoiceHold()
             }
         }
         keyboardMenuView?.callback = object : KeyboardMenuView.Callback {
@@ -371,17 +379,43 @@ class MoqiInputMethodService : InputMethodService() {
         startVoiceListening()
     }
 
+    private fun startSpaceVoiceHold() {
+        if (isListening) return
+        modeBeforeVoice = if (currentMode == InputMode.VOICE) modeBeforeVoice else currentMode
+        isSpaceVoiceHoldActive = true
+        startVoiceListening()
+    }
+
+    private fun stopSpaceVoiceHold() {
+        if (!isSpaceVoiceHoldActive) return
+        isSpaceVoiceHoldActive = false
+        val text = composingText.toString().trim()
+        if (text.isNotBlank()) {
+            currentInputConnection.commitText(text, 1)
+        }
+        stopVoiceListening()
+        composingText.clear()
+        updateComposeView()
+    }
+
     @SuppressLint("NewApi")
     private fun startVoiceListening() {
+        val voiceHoldRequest = isSpaceVoiceHoldActive
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            requestRecordAudioPermission()
+            requestRecordAudioPermission(voiceHoldRequest)
             return
         }
 
         // 检查模型是否已下载（Sherpa-onnx 需要手动下载模型）
         if (!ModelManager.isModelReady(this)) {
             composeView?.setComposingText("语音模型未下载")
-            handler.postDelayed({ exitVoiceMode() }, 2000)
+            handler.postDelayed({
+                if (voiceHoldRequest) {
+                    stopSpaceVoiceHold()
+                } else {
+                    exitVoiceMode()
+                }
+            }, 2000)
             return
         }
 
@@ -407,20 +441,32 @@ class MoqiInputMethodService : InputMethodService() {
             onError = {
                 isListening = false
                 composeView?.setComposingText("语音识别失败")
-                handler.postDelayed({ exitVoiceMode() }, 1500)
+                handler.postDelayed({
+                    if (voiceHoldRequest) {
+                        stopSpaceVoiceHold()
+                    } else {
+                        exitVoiceMode()
+                    }
+                }, 1500)
             }
         )
     }
 
     @SuppressLint("NewApi")
-    private fun requestRecordAudioPermission() {
+    private fun requestRecordAudioPermission(voiceHoldRequest: Boolean = false) {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.fromParts("package", packageName, null)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
         composeView?.setComposingText("请授权麦克风权限后重试")
-        handler.postDelayed({ exitVoiceMode() }, 2000)
+        handler.postDelayed({
+            if (voiceHoldRequest) {
+                stopSpaceVoiceHold()
+            } else {
+                exitVoiceMode()
+            }
+        }, 2000)
     }
 
     private fun stopVoiceListening() {
@@ -431,6 +477,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun exitVoiceMode() {
+        isSpaceVoiceHoldActive = false
         stopVoiceListening()
         currentMode = modeBeforeVoice
         resetTextEngine()
