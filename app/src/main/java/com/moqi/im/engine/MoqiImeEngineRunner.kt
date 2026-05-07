@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicLong
 
 class MoqiImeEngineRunner(
     private val androidDataDir: String,
-    initialGuid: String
+    initialGuid: String,
+    private val onInitialReady: ((String) -> Unit)? = null
 ) {
     data class EngineResult(
         val sequence: Long,
@@ -26,11 +27,17 @@ class MoqiImeEngineRunner(
     private var currentGuid: String = initialGuid
 
     init {
+        val targetGeneration = generation.get()
         executor.execute {
-            session = MoqiImeSession(
+            val newSession = MoqiImeSession(
                 guid = initialGuid,
                 androidDataDir = androidDataDir
             )
+            session = newSession
+            val schemaId = newSession.currentSchemaId()
+            postIfCurrent(targetGeneration) {
+                onInitialReady?.invoke(schemaId)
+            }
         }
     }
 
@@ -76,6 +83,12 @@ class MoqiImeEngineRunner(
         }
     }
 
+    fun changeCandidatePage(backward: Boolean, callback: (EngineResult) -> Unit) {
+        submit("changeCandidatePage backward=$backward", callback) {
+            session?.changePage(backward) ?: notReadyResult()
+        }
+    }
+
     fun command(commandId: Int, callback: (EngineResult) -> Unit) {
         submit("command id=$commandId", callback) {
             session?.command(commandId) ?: notReadyResult()
@@ -104,16 +117,42 @@ class MoqiImeEngineRunner(
             val start = System.nanoTime()
             val activeSession = session
             val result = activeSession?.selectSchemeSet(name) ?: notReadyResult()
-            val oldSession = session
-            val newSession = MoqiImeSession(guid = currentGuid, androidDataDir = androidDataDir)
-            oldSession?.close()
-            session = newSession
-            val schemaId = newSession.currentSchemaId()
+            val schemaId = if (result.success && activeSession != null) {
+                waitForSchemeSetReady(activeSession, name)
+            } else {
+                activeSession?.currentSchemaId().orEmpty()
+            }
             logDuration("selectSchemeSet", start, "request=$requestId name=$name success=${result.success}")
             postIfCurrent(targetGeneration) {
                 callback(EngineResult(requestId, result), schemaId)
             }
         }
+    }
+
+    private fun waitForSchemeSetReady(activeSession: MoqiImeSession, name: String): String {
+        repeat(SCHEME_SET_READY_ATTEMPTS) {
+            val currentSchemeSet = activeSession.currentSchemeSet()
+            val schemas = activeSession.schemaEntries()
+            if (currentSchemeSet == name && schemas.isNotEmpty()) {
+                return ensureCurrentSchemaForSession(activeSession)
+            }
+            Thread.sleep(SCHEME_SET_READY_DELAY_MS)
+        }
+        return ensureCurrentSchemaForSession(activeSession)
+    }
+
+    private fun ensureCurrentSchemaForSession(activeSession: MoqiImeSession): String {
+        val schemas = activeSession.schemaEntries()
+        val current = activeSession.currentSchemaId()
+        if (schemas.isEmpty()) {
+            return current
+        }
+        if (schemas.any { it.id == current }) {
+            return current
+        }
+        val target = schemas.firstOrNull { it.selected }?.id ?: schemas.first().id
+        val result = activeSession.selectSchema(target)
+        return if (result.success) activeSession.currentSchemaId().ifBlank { target } else current
     }
 
     fun selectSchema(schemaId: String, callback: (EngineResult, String) -> Unit) {
@@ -212,5 +251,7 @@ class MoqiImeEngineRunner(
     companion object {
         private const val TAG = "MoqiImeEngineRunner"
         private const val SLOW_LOG_THRESHOLD_MS = 30L
+        private const val SCHEME_SET_READY_ATTEMPTS = 40
+        private const val SCHEME_SET_READY_DELAY_MS = 150L
     }
 }

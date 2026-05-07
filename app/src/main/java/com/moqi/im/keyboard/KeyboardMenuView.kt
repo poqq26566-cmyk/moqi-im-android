@@ -2,10 +2,12 @@ package com.moqi.im.keyboard
 
 import android.content.Context
 import android.graphics.Color
+import android.text.TextUtils
 import android.text.InputType
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.GridLayout
@@ -37,7 +39,7 @@ class KeyboardMenuView @JvmOverloads constructor(
         fun onInputMethodPicker()
         fun onVoiceInput()
         fun onOpenSettings()
-        fun onDownloadScheme(url: String, schemeSetName: String)
+        fun onDownloadScheme(url: String)
     }
 
     var callback: Callback? = null
@@ -51,11 +53,15 @@ class KeyboardMenuView @JvmOverloads constructor(
         hint = "方案集 ZIP URL"
         inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         setSingleLine(true)
-    }
-    private val downloadName = EditText(context).apply {
-        hint = "方案集名称"
-        inputType = InputType.TYPE_CLASS_TEXT
-        setSingleLine(true)
+        isFocusable = true
+        isFocusableInTouchMode = true
+        setSelectAllOnFocus(false)
+        setOnClickListener { showKeyboardForUrlInput() }
+        setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                showKeyboardForUrlInput()
+            }
+        }
     }
 
     init {
@@ -92,7 +98,7 @@ class KeyboardMenuView @JvmOverloads constructor(
                 Action(if (name == state.currentSchemeSet) "✓ $name" else name) {
                     callback?.onSchemeSet(name)
                 }
-            })
+            }, columns = 2, itemHeight = 72)
         }
 
         if (state.schemas.isNotEmpty()) {
@@ -102,7 +108,7 @@ class KeyboardMenuView @JvmOverloads constructor(
                 Action(if (selected) "✓ ${schema.name}" else schema.name) {
                     callback?.onSchema(schema.id)
                 }
-            })
+            }, columns = 2, itemHeight = 84)
         }
 
         val configItems = commandItems.filter {
@@ -143,15 +149,15 @@ class KeyboardMenuView @JvmOverloads constructor(
         })
     }
 
-    private fun addGrid(actions: List<Action>) {
+    private fun addGrid(actions: List<Action>, columns: Int = 4, itemHeight: Int = 64) {
         val grid = GridLayout(context).apply {
-            columnCount = 4
+            columnCount = columns
             useDefaultMargins = true
         }
         actions.forEach { action ->
             val lp = GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(64)
+                height = dp(itemHeight)
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
                 setMargins(dp(4), dp(4), dp(4), dp(4))
             }
@@ -163,10 +169,23 @@ class KeyboardMenuView @JvmOverloads constructor(
     private fun addDownloadSection() {
         addSection("下载新方案集")
         content.addView(downloadUrl, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(48)))
-        content.addView(downloadName, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(48)))
+        content.addView(TextView(context).apply {
+            text = "方案集名称会自动从 URL 文件名提取"
+            textSize = 13f
+            setTextColor(Color.rgb(96, 96, 128))
+            setPadding(0, dp(4), 0, dp(6))
+        })
         content.addView(menuButton("下载并切换") {
-            callback?.onDownloadScheme(downloadUrl.text.toString(), downloadName.text.toString())
+            callback?.onDownloadScheme(downloadUrl.text.toString())
         }, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(48)))
+    }
+
+    private fun showKeyboardForUrlInput() {
+        downloadUrl.requestFocus()
+        downloadUrl.post {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(downloadUrl, InputMethodManager.SHOW_IMPLICIT)
+        }
     }
 
     private fun menuButton(textValue: String, onClick: View.OnClickListener): Button {
@@ -174,6 +193,8 @@ class KeyboardMenuView @JvmOverloads constructor(
             text = textValue
             textSize = 14f
             isAllCaps = false
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
             setOnClickListener(onClick)
         }
     }

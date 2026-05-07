@@ -3,13 +3,16 @@ package com.moqi.im.keyboard
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import com.moqi.im.R
 import com.moqi.im.engine.CandidateEntry
+import kotlin.math.abs
 
 class CandidateView @JvmOverloads constructor(
     context: Context,
@@ -18,21 +21,33 @@ class CandidateView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = sp(23f)
+        textSize = sp(19f)
         textAlign = Paint.Align.LEFT
     }
     private val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = sp(16f)
+        textSize = sp(17f)
         textAlign = Paint.Align.LEFT
     }
     private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
     private var candidates: List<CandidateEntry> = emptyList()
     private var itemRects: List<RectF> = emptyList()
+    private var moreButtonRect = RectF()
     private var pressedIndex: Int = -1
+    private var moreButtonPressed = false
+    private var scrollOffset = 0f
+    private var maxScrollOffset = 0f
+    private var downX = 0f
+    private var lastX = 0f
+    private var isDragging = false
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     private var onCandidateSelected: ((String) -> Unit)? = null
     private var onCandidateIndexSelected: ((Int) -> Unit)? = null
+    private var onMoreCandidates: (() -> Unit)? = null
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -49,6 +64,8 @@ class CandidateView @JvmOverloads constructor(
     fun setCandidateEntries(candidates: List<CandidateEntry>) {
         this.candidates = candidates
         pressedIndex = -1
+        moreButtonPressed = false
+        scrollOffset = 0f
         requestLayout()
         invalidate()
     }
@@ -63,6 +80,10 @@ class CandidateView @JvmOverloads constructor(
         onCandidateIndexSelected = listener
     }
 
+    fun setOnMoreCandidatesListener(listener: () -> Unit) {
+        onMoreCandidates = listener
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
@@ -70,26 +91,44 @@ class CandidateView @JvmOverloads constructor(
         commentPaint.color = if (isDarkMode) 0xFF9CA3AA.toInt() else 0xFF69727D.toInt()
         dividerPaint.color = if (isDarkMode) 0xFF3A4148.toInt() else 0xFFD7DCE2.toInt()
         highlightPaint.color = if (isDarkMode) 0xFF303942.toInt() else 0xFFE5E9EF.toInt()
+        arrowPaint.color = if (isDarkMode) 0xFFB8C0C8.toInt() else 0xFF69727D.toInt()
 
+        canvas.save()
+        canvas.clipRect(0f, 0f, moreButtonRect.left, height.toFloat())
+        canvas.translate(-scrollOffset, 0f)
         for ((i, rect) in itemRects.withIndex()) {
             if (i >= candidates.size) break
+            if (rect.right < scrollOffset || rect.left > scrollOffset + moreButtonRect.left) continue
+
             val candidate = candidates[i]
             val isSelected = i == pressedIndex
 
+            canvas.save()
+            canvas.clipRect(rect.left + dp(1f), rect.top, rect.right - dp(1f), rect.bottom)
             if (isSelected) {
                 canvas.drawRoundRect(rect, dp(6f), dp(6f), highlightPaint)
             }
 
-            val textX = rect.left + dp(14f)
+            val textX = rect.left + dp(12f)
             val textBaseline = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
             canvas.drawText(candidate.text, textX, textBaseline, textPaint)
             if (candidate.comment.isNotBlank()) {
-                val commentX = textX + textPaint.measureText(candidate.text) + dp(8f)
+                val commentX = textX + textPaint.measureText(candidate.text) + dp(7f)
                 canvas.drawText(candidate.comment, commentX, textBaseline, commentPaint)
             }
+            canvas.restore()
             if (i < itemRects.lastIndex) {
                 canvas.drawLine(rect.right, dp(8f), rect.right, height - dp(8f), dividerPaint)
             }
+        }
+        canvas.restore()
+
+        if (candidates.isNotEmpty()) {
+            if (moreButtonPressed) {
+                canvas.drawRoundRect(moreButtonRect, dp(6f), dp(6f), highlightPaint)
+            }
+            canvas.drawLine(moreButtonRect.left, dp(8f), moreButtonRect.left, height - dp(8f), dividerPaint)
+            drawMoreArrow(canvas)
         }
 
         if (candidates.isEmpty()) {
@@ -111,22 +150,57 @@ class CandidateView @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                pressedIndex = findItemAt(event.x)
+                downX = event.x
+                lastX = event.x
+                isDragging = false
+                moreButtonPressed = moreButtonRect.contains(event.x, event.y) && candidates.isNotEmpty()
+                pressedIndex = if (moreButtonPressed) -1 else findItemAt(event.x + scrollOffset)
                 invalidate()
                 return true
             }
+            MotionEvent.ACTION_MOVE -> {
+                if (moreButtonPressed) {
+                    if (!moreButtonRect.contains(event.x, event.y)) {
+                        moreButtonPressed = false
+                        invalidate()
+                    }
+                    return true
+                }
+                val dx = lastX - event.x
+                if (!isDragging && abs(event.x - downX) > touchSlop) {
+                    isDragging = true
+                    pressedIndex = -1
+                }
+                if (isDragging) {
+                    scrollOffset = (scrollOffset + dx).coerceIn(0f, maxScrollOffset)
+                    invalidate()
+                }
+                lastX = event.x
+                return true
+            }
             MotionEvent.ACTION_UP -> {
-                val idx = findItemAt(event.x)
-                if (idx in candidates.indices && idx == pressedIndex) {
+                if (moreButtonPressed) {
+                    if (moreButtonRect.contains(event.x, event.y)) {
+                        onMoreCandidates?.invoke()
+                    }
+                    moreButtonPressed = false
+                    invalidate()
+                    return true
+                }
+                val idx = findItemAt(event.x + scrollOffset)
+                if (!isDragging && idx in candidates.indices && idx == pressedIndex) {
                     onCandidateIndexSelected?.invoke(idx)
                     onCandidateSelected?.invoke(candidates[idx].text)
                 }
                 pressedIndex = -1
+                isDragging = false
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 pressedIndex = -1
+                moreButtonPressed = false
+                isDragging = false
                 invalidate()
                 return true
             }
@@ -136,16 +210,35 @@ class CandidateView @JvmOverloads constructor(
 
     private fun calculateItemRects(totalWidth: Int, totalHeight: Float = height.toFloat()) {
         val padding = dp(4f)
+        val moreButtonWidth = if (candidates.isEmpty()) 0f else dp(48f)
+        val contentWidth = (totalWidth - moreButtonWidth).coerceAtLeast(0f)
+        moreButtonRect = RectF(contentWidth, 0f, totalWidth.toFloat(), totalHeight)
         var x = padding
         itemRects = candidates.map { candidate ->
-            val desiredWidth = dp(28f) +
+            val desiredWidth = dp(24f) +
                 textPaint.measureText(candidate.text) +
-                if (candidate.comment.isBlank()) 0f else dp(10f) + commentPaint.measureText(candidate.comment)
-            val itemWidth = desiredWidth.coerceIn(dp(72f), totalWidth * 0.42f)
+                if (candidate.comment.isBlank()) 0f else dp(8f) + commentPaint.measureText(candidate.comment)
+            val itemWidth = desiredWidth.coerceAtLeast(dp(62f))
             RectF(x, 0f, x + itemWidth, totalHeight).also {
                 x += itemWidth
             }
         }
+        maxScrollOffset = (x + padding - contentWidth).coerceAtLeast(0f)
+        scrollOffset = scrollOffset.coerceIn(0f, maxScrollOffset)
+    }
+
+    private fun drawMoreArrow(canvas: Canvas) {
+        val cx = moreButtonRect.centerX()
+        val cy = moreButtonRect.centerY() + dp(1f)
+        val halfWidth = dp(8f)
+        val halfHeight = dp(5f)
+        val path = Path().apply {
+            moveTo(cx - halfWidth, cy - halfHeight)
+            lineTo(cx + halfWidth, cy - halfHeight)
+            lineTo(cx, cy + halfHeight)
+            close()
+        }
+        canvas.drawPath(path, arrowPaint)
     }
 
     private fun findItemAt(x: Float): Int {

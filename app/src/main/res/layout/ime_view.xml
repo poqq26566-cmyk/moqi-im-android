@@ -4,36 +4,35 @@
     android:layout_height="match_parent"
     android:background="#F0F0F5">
 
-    <com.moqi.im.keyboard.CandidateView
-        android:id="@+id/candidate_view"
-        android:layout_width="match_parent"
-        android:layout_height="42dp"
-        android:layout_alignParentTop="true" />
-
     <com.moqi.im.keyboard.ComposeView
         android:id="@+id/compose_view"
         android:layout_width="match_parent"
-        android:layout_height="28dp"
-        android:layout_below="@id/candidate_view"
-        android:background="#F7F8FA"
+        android:layout_height="24dp"
+        android:layout_alignParentTop="true"
         android:gravity="center_vertical"
         android:paddingStart="8dp"
         android:paddingEnd="8dp"
-        android:textSize="15sp"
+        android:textSize="14sp"
         android:textColor="#1A1A2E" />
+
+    <com.moqi.im.keyboard.CandidateView
+        android:id="@+id/candidate_view"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_below="@id/compose_view" />
 
     <com.moqi.im.keyboard.KeyboardView
         android:id="@+id/keyboard_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_below="@id/compose_view"
+        android:layout_below="@id/candidate_view"
         android:layout_alignParentBottom="true" />
 
     <com.moqi.im.keyboard.KeyboardMenuView
         android:id="@+id/keyboard_menu_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_below="@id/compose_view"
+        android:layout_below="@id/candidate_view"
         android:layout_alignParentBottom="true"
         android:visibility="gone" />
 

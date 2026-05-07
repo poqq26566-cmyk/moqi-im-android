@@ -107,6 +107,19 @@ class MoqiImeSession(
         }
     }
 
+    fun changePage(backward: Boolean): MoqiImeResult {
+        val activeSession = session ?: return initErrorResult()
+        return runCatching {
+            val start = System.nanoTime()
+            val result = activeSession.changePage(backward).toResult()
+            logDuration("changePage", start, "backward=$backward success=${result.success} candidates=${result.candidates.size}")
+            result
+        }.getOrElse { error ->
+            Log.e(TAG, "changePage failed backward=$backward", error)
+            error.toResult()
+        }
+    }
+
     fun command(commandId: Int): MoqiImeResult {
         val activeSession = session ?: return initErrorResult()
         return runCatching {

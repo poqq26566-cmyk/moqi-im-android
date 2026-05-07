@@ -5,8 +5,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.util.Log
 import android.view.KeyEvent
@@ -38,6 +43,8 @@ import mobilebridge.Mobilebridge
 class MoqiInputMethodService : InputMethodService() {
     companion object {
         private const val TAG = "MoqiInputMethodService"
+        private const val RIME_INIT_MESSAGE = "正在初始化 Rime…"
+        private const val KEY_VIBRATION_MS = 12L
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -82,9 +89,21 @@ class MoqiInputMethodService : InputMethodService() {
     private var sherpaVoiceEngine: SherpaVoiceEngine? = null
     private var isListening: Boolean = false
     private var isSpaceVoiceHoldActive: Boolean = false
+    private var isEngineInitializing: Boolean = true
 
     private val handler = Handler(Looper.getMainLooper())
     private val downloadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val powerManager: PowerManager by lazy {
+        getSystemService(POWER_SERVICE) as PowerManager
+    }
+    private val vibrator: Vibrator? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(VIBRATOR_SERVICE) as Vibrator
+        }
+    }
     private var t9TapCount: Int = 0
     private var t9CurrentKey: Int = 0
     private var t9Runnable: Runnable? = null
@@ -108,11 +127,20 @@ class MoqiInputMethodService : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         loadInputModePreference()
+    }
+
+    private fun ensureEngineRunner() {
+        if (::engineRunner.isInitialized) return
+        isEngineInitializing = true
+        showRimeInitializingIfNeeded()
         engineRunner = MoqiImeEngineRunner(
             androidDataDir = applicationContext.filesDir.absolutePath,
             initialGuid = guidForMode(currentMode)
-        )
-        refreshCurrentSchema()
+        ) { schemaId ->
+            isEngineInitializing = false
+            applySchemaLayout(schemaId)
+            clearRimeInitializingMessage()
+        }
     }
 
     override fun onCreateInputView(): View {
@@ -170,18 +198,35 @@ class MoqiInputMethodService : InputMethodService() {
                 enterVoiceMode()
             }
             override fun onOpenSettings() = launchSettings()
-            override fun onDownloadScheme(url: String, schemeSetName: String) {
-                downloadSchemeSet(url, schemeSetName)
+            override fun onDownloadScheme(url: String) {
+                downloadSchemeSet(url)
             }
         }
 
         candidateView?.setOnCandidateIndexSelectedListener { index ->
+            if (!::engineRunner.isInitialized) {
+                showRimeInitializingIfNeeded()
+                return@setOnCandidateIndexSelectedListener
+            }
             engineRunner.selectCandidate(index) { engineResult ->
+                applyMoqiResult(engineResult.result)
+            }
+        }
+        candidateView?.setOnMoreCandidatesListener {
+            if (!::engineRunner.isInitialized) {
+                showRimeInitializingIfNeeded()
+                return@setOnMoreCandidatesListener
+            }
+            engineRunner.changeCandidatePage(backward = false) { engineResult ->
                 applyMoqiResult(engineResult.result)
             }
         }
 
         updateKeyboard()
+        showRimeInitializingIfNeeded()
+        handler.post {
+            ensureEngineRunner()
+        }
         return imeView!!
     }
 
@@ -197,6 +242,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun handleKey(keyCode: Int, isShifted: Boolean) {
+        performKeyVibration()
         when (keyCode) {
             KeyCode.DELETE -> handleBackspace()
             KeyCode.ENTER -> handleEnter()
@@ -250,6 +296,7 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun handleSwipeText(text: String) {
         if (text.isBlank()) return
+        performKeyVibration()
         if (currentMode == InputMode.ENGLISH) {
             commitText(text)
             return
@@ -338,7 +385,7 @@ class MoqiInputMethodService : InputMethodService() {
         }
         if (shiftActive && !shiftLocked) {
             shiftActive = false
-            keyboardView?.setShifted(false)
+            updateShiftKeyState()
         }
     }
 
@@ -370,7 +417,7 @@ class MoqiInputMethodService : InputMethodService() {
         } else {
             shiftActive = true
         }
-        keyboardView?.setShifted(shiftActive || shiftLocked)
+        updateShiftKeyState()
     }
 
     private fun cycleInputMode() {
@@ -388,6 +435,7 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun startSpaceVoiceHold() {
         if (isListening) return
+        performKeyVibration()
         modeBeforeVoice = if (currentMode == InputMode.VOICE) modeBeforeVoice else currentMode
         isSpaceVoiceHoldActive = true
         startVoiceListening()
@@ -494,19 +542,26 @@ class MoqiInputMethodService : InputMethodService() {
     private fun switchMode(mode: InputMode) {
         if (currentMode == InputMode.VOICE) stopVoiceListening()
         currentMode = mode
+        shiftActive = false
+        shiftLocked = false
         resetTextEngine()
         updateKeyboard()
     }
 
     private fun resetTextEngine() {
         if (::engineRunner.isInitialized) {
+            isEngineInitializing = true
+            showRimeInitializingIfNeeded()
             engineRunner.resetSession(guidForMode(currentMode)) { schemaId ->
+                isEngineInitializing = false
                 applySchemaLayout(schemaId)
+                clearRimeInitializingMessage()
             }
         }
         composingText.clear()
         candidateView?.setCandidates(emptyList())
         updateComposeView()
+        showRimeInitializingIfNeeded()
     }
 
     private fun clearTextEngineState() {
@@ -516,6 +571,7 @@ class MoqiInputMethodService : InputMethodService() {
         composingText.clear()
         candidateView?.setCandidates(emptyList())
         updateComposeView()
+        showRimeInitializingIfNeeded()
     }
 
     private fun guidForMode(mode: InputMode): String {
@@ -558,6 +614,13 @@ class MoqiInputMethodService : InputMethodService() {
         fallbackOnFailure: Boolean = false,
         fallback: (() -> Unit)? = null
     ) {
+        if (!::engineRunner.isInitialized) {
+            showRimeInitializingIfNeeded()
+            if (fallbackOnFailure) {
+                fallback?.invoke()
+            }
+            return
+        }
         engineRunner.keyDown(keyCode, charCode) { engineResult ->
             val result = engineResult.result
             Log.d(TAG, "engineResult seq=${engineResult.sequence} mode=$currentMode keyCode=$keyCode charCode=$charCode success=${result.success} handled=${result.handled} composition=${result.composition} commit=${result.commit} candidates=${result.candidates.size} error=${result.error}")
@@ -623,6 +686,30 @@ class MoqiInputMethodService : InputMethodService() {
         composeView?.setComposingText(composingText.toString())
     }
 
+    private fun showRimeInitializingIfNeeded() {
+        if (isEngineInitializing && guidForMode(currentMode) == Mobilebridge.GUIDRime && composingText.isEmpty()) {
+            composeView?.setComposingText(RIME_INIT_MESSAGE)
+        }
+    }
+
+    private fun clearRimeInitializingMessage() {
+        if (composeView == null || composingText.isNotEmpty()) return
+        composeView?.setComposingText("")
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun performKeyVibration() {
+        if (powerManager.isPowerSaveMode) return
+        val activeVibrator = vibrator ?: return
+        if (!activeVibrator.hasVibrator()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            activeVibrator.vibrate(VibrationEffect.createOneShot(KEY_VIBRATION_MS, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            activeVibrator.vibrate(KEY_VIBRATION_MS)
+        }
+    }
+
     private fun updateKeyboard() {
         val layout = if (currentMode == InputMode.VOICE) {
             KeyboardView.Layout.VOICE
@@ -638,6 +725,16 @@ class MoqiInputMethodService : InputMethodService() {
             }
         }
         keyboardView?.setLayout(layout)
+        updateShiftKeyState()
+    }
+
+    private fun updateShiftKeyState() {
+        val state = when {
+            shiftLocked -> KeyboardView.ShiftState.LOCKED_UPPER
+            shiftActive -> KeyboardView.ShiftState.TEMP_UPPER
+            else -> KeyboardView.ShiftState.LOWER
+        }
+        keyboardView?.setShiftState(state)
     }
 
     private fun showMenuPanel() {
@@ -672,15 +769,15 @@ class MoqiInputMethodService : InputMethodService() {
         imm?.showInputMethodPicker()
     }
 
-    private fun downloadSchemeSet(rawUrl: String, rawName: String) {
+    private fun downloadSchemeSet(rawUrl: String) {
         val url = rawUrl.trim()
-        val name = sanitizeSchemeSetName(rawName)
+        val name = schemeSetNameFromUrl(url)
         if (!url.startsWith("https://", ignoreCase = true) && !url.startsWith("http://", ignoreCase = true)) {
             showMessage("只支持 http/https URL")
             return
         }
         if (name.isBlank()) {
-            showMessage("请输入方案集名称")
+            showMessage("无法从 URL 提取方案集名称")
             return
         }
         composeView?.setComposingText("正在下载方案集...")
@@ -688,14 +785,23 @@ class MoqiInputMethodService : InputMethodService() {
             val result = runCatching {
                 val root = File(applicationContext.filesDir, "Moqi").apply { mkdirs() }
                 val target = File(root, name).canonicalFile
+                val temp = File(root, ".$name-download").canonicalFile
                 if (!target.path.startsWith(root.canonicalPath + File.separator)) {
                     error("方案集名称不合法")
+                }
+                if (!temp.path.startsWith(root.canonicalPath + File.separator)) {
+                    error("临时目录不合法")
                 }
                 if (target.exists()) {
                     target.deleteRecursively()
                 }
+                if (temp.exists()) {
+                    temp.deleteRecursively()
+                }
+                temp.mkdirs()
                 target.mkdirs()
-                downloadAndUnzip(url, target)
+                downloadAndUnzip(url, temp)
+                installDownloadedSchemeSet(temp, target)
                 name
             }
             handler.post {
@@ -742,8 +848,45 @@ class MoqiInputMethodService : InputMethodService() {
         }
     }
 
+    private fun installDownloadedSchemeSet(temp: File, target: File) {
+        val source = normalizedSchemeSetRoot(temp)
+        target.mkdirs()
+        source.copyRecursively(target, overwrite = true)
+        temp.deleteRecursively()
+        if (!target.walkTopDown().any { it.isFile && it.extension.equals("yaml", ignoreCase = true) }) {
+            error("ZIP 中没有发现 Rime YAML 配置")
+        }
+    }
+
+    private fun normalizedSchemeSetRoot(temp: File): File {
+        val entries = temp.listFiles().orEmpty().filterNot { it.name.startsWith(".") }
+        val hasRootYaml = entries.any { it.isFile && it.extension.equals("yaml", ignoreCase = true) }
+        if (hasRootYaml) {
+            return temp
+        }
+        val singleDir = entries.singleOrNull { it.isDirectory }
+        return singleDir ?: temp
+    }
+
     private fun sanitizeSchemeSetName(name: String): String {
         return name.trim().replace(Regex("[^A-Za-z0-9_.-]"), "_").trim('_', '.', '-')
+    }
+
+    private fun schemeSetNameFromUrl(rawUrl: String): String {
+        val parsed = runCatching { Uri.parse(rawUrl) }.getOrNull()
+        val fileName = parsed?.lastPathSegment
+            ?.substringBefore('?')
+            ?.substringBefore('#')
+            .orEmpty()
+            .ifBlank {
+                rawUrl.substringBefore('?').substringBefore('#').trimEnd('/').substringAfterLast('/')
+            }
+        return sanitizeSchemeSetName(
+            fileName
+                .removeSuffix(".zip")
+                .removeSuffix(".ZIP")
+                .ifBlank { "downloaded_scheme" }
+        )
     }
 
     private fun showMessage(message: String) {

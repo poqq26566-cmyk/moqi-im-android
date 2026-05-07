@@ -3,6 +3,7 @@ package com.moqi.im.keyboard
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.KeyEvent
@@ -24,6 +25,7 @@ class KeyboardView @JvmOverloads constructor(
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val subLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val specialKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var keyWidth: Float = 0f
     private var keyHeight: Float = 0f
@@ -42,9 +44,13 @@ class KeyboardView @JvmOverloads constructor(
     private var spaceLongPressRunnable: Runnable? = null
     private var spaceLongPressTriggered: Boolean = false
 
-    private var isShifted: Boolean = false
+    private var shiftState: ShiftState = ShiftState.LOWER
     private var onKeyListener: ((Int, Boolean, String?) -> Unit)? = null
     private var onSpaceLongPressListener: ((Boolean) -> Unit)? = null
+
+    enum class ShiftState {
+        LOWER, TEMP_UPPER, LOCKED_UPPER
+    }
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -70,7 +76,13 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     fun setShifted(shifted: Boolean) {
-        isShifted = shifted
+        setShiftState(
+            if (shifted) ShiftState.TEMP_UPPER else ShiftState.LOWER
+        )
+    }
+
+    fun setShiftState(state: ShiftState) {
+        shiftState = state
         invalidate()
     }
 
@@ -113,14 +125,15 @@ class KeyboardView @JvmOverloads constructor(
     private fun updatePaintColors() {
         val dark = isDarkMode
         labelPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
-        labelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) 38f else 42f
+        labelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(30f) else dp(23f)
         labelPaint.textAlign = Paint.Align.CENTER
         subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-        subLabelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) 16f else 14f
+        subLabelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(13f) else dp(12f)
         subLabelPaint.textAlign = Paint.Align.CENTER
         specialKeyPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
-        specialKeyPaint.textSize = 28f
+        specialKeyPaint.textSize = dp(16f)
         specialKeyPaint.textAlign = Paint.Align.CENTER
+        iconPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         val bgColor = if (dark) 0xFF1A1A2E.toInt() else 0xFFF0F0F5.toInt()
         setBackgroundColor(bgColor)
     }
@@ -139,9 +152,14 @@ class KeyboardView @JvmOverloads constructor(
         keyPaint.color = bgColor
         canvas.drawRoundRect(rect, cornerRadius, cornerRadius, keyPaint)
 
+        if (key.keyCode == KeyCode.SHIFT) {
+            drawShiftKey(canvas, rect)
+            return
+        }
+
         val textPaint = if (isSpecialKey(key)) specialKeyPaint else labelPaint
         val text = if (isSpecialKey(key)) key.label else {
-            if (isShifted && key.keyCode >= KeyEvent.KEYCODE_A && key.keyCode <= KeyEvent.KEYCODE_Z) {
+            if (shouldDisplayUppercaseLetters() && key.keyCode >= KeyEvent.KEYCODE_A && key.keyCode <= KeyEvent.KEYCODE_Z) {
                 key.label.uppercase()
             } else {
                 key.label
@@ -150,6 +168,8 @@ class KeyboardView @JvmOverloads constructor(
 
         val textBaseline = if (key.swipeText.isNullOrBlank() || isSpecialKey(key)) {
             rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+        } else if (isT9Layout()) {
+            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f
         } else {
             rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f
         }
@@ -159,12 +179,40 @@ class KeyboardView @JvmOverloads constructor(
         if (subLabel != null && !isSpecialKey(key)) {
             subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
             val subBaseline = if (isT9Layout()) {
-                rect.top + 18f * resources.displayMetrics.density
+                rect.top + dp(16f)
             } else {
-                rect.bottom - 10f * resources.displayMetrics.density
+                rect.bottom - dp(10f)
             }
             canvas.drawText(subLabel, rect.centerX(), subBaseline, subLabelPaint)
         }
+    }
+
+    private fun drawShiftKey(canvas: Canvas, rect: RectF) {
+        val locked = shiftState == ShiftState.LOCKED_UPPER
+        val active = shiftState != ShiftState.LOWER
+        val cx = rect.centerX()
+        val cy = rect.centerY() - dp(1f)
+        val unit = rect.height().coerceAtMost(rect.width()) * 0.18f
+        val path = Path().apply {
+            moveTo(cx, cy - unit * 1.45f)
+            lineTo(cx - unit * 1.55f, cy + unit * 0.2f)
+            lineTo(cx - unit * 0.72f, cy + unit * 0.2f)
+            lineTo(cx - unit * 0.72f, cy + unit * 1.45f)
+            lineTo(cx + unit * 0.72f, cy + unit * 1.45f)
+            lineTo(cx + unit * 0.72f, cy + unit * 0.2f)
+            lineTo(cx + unit * 1.55f, cy + unit * 0.2f)
+            close()
+        }
+        iconPaint.style = if (active) Paint.Style.FILL else Paint.Style.STROKE
+        iconPaint.strokeWidth = dp(3f)
+        canvas.drawPath(path, iconPaint)
+        if (locked) {
+            iconPaint.style = Paint.Style.STROKE
+            iconPaint.strokeWidth = dp(2.2f)
+            val underlineY = rect.bottom - dp(13f)
+            canvas.drawLine(cx - unit * 1.35f, underlineY, cx + unit * 1.35f, underlineY, iconPaint)
+        }
+        iconPaint.style = Paint.Style.FILL
     }
 
     private fun drawVoiceMode(canvas: Canvas) {
@@ -319,13 +367,13 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun dispatchKey(keyPos: Pair<Int, Int>) {
         val key = keyAt(keyPos) ?: return
-        onKeyListener?.invoke(key.keyCode, isShifted, null)
+        onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, null)
     }
 
     private fun dispatchSwipeKey(keyPos: Pair<Int, Int>) {
         val key = keyAt(keyPos) ?: return
         val swipeText = key.swipeText ?: return
-        onKeyListener?.invoke(key.keyCode, isShifted, swipeText)
+        onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, swipeText)
     }
 
     private fun keyAt(keyPos: Pair<Int, Int>): KeyDefinition? {
@@ -375,6 +423,9 @@ class KeyboardView @JvmOverloads constructor(
     private fun isNumberOrSymbolLayout(): Boolean =
         currentLayout == Layout.NUMBER || currentLayout == Layout.SYMBOL
 
+    private fun shouldDisplayUppercaseLetters(): Boolean =
+        currentLayout == Layout.QWERTY_CN || shiftState != ShiftState.LOWER
+
     private fun isT9InputKey(keyCode: Int): Boolean =
         keyCode in KeyCode.T9_POUND..KeyCode.T9_1
 
@@ -383,15 +434,15 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun qwertyCnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
-        rowOf("asdfghjkl", listOf("@", "*", "+", "-", "=", "/", "#", "(", ")")),
-        rowOfWithExtras("zxcvbnm", listOf("'", ":", "\"", "?", "!", "~", "\\")),
+        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“", "”", "*", "?")),
+        rowOfWithExtras("zxcvbnm", listOf("(", ")", "-", "_", ":", ";", "/")),
         bottomRowCn()
     )
 
     private fun qwertyEnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
-        rowOf("asdfghjkl", listOf("@", "*", "+", "-", "=", "/", "#", "(", ")")),
-        rowOfWithExtras("zxcvbnm", listOf("'", ":", "\"", "?", "!", "~", "\\")),
+        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“", "”", "*", "?")),
+        rowOfWithExtras("zxcvbnm", listOf("(", ")", "-", "_", ":", ";", "/")),
         bottomRowEn()
     )
 
@@ -589,6 +640,8 @@ class KeyboardView @JvmOverloads constructor(
         in '0'..'9' -> KeyEvent.KEYCODE_0 + (ch - '0')
         else -> ch.code
     }
+
+    private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
     private fun voiceRows(): List<List<KeyDefinition>> = listOf(
         listOf(
