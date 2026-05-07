@@ -31,8 +31,16 @@
     <string name="setup_step1">第一步：启用墨奇\n\n请前往系统设置，在键盘列表中打开“墨奇”。</string>
     <string name="setup_step2">第二步：切换到墨奇\n\n墨奇已启用，请在输入法选择器中选择“墨奇”。</string>
     <string name="setup_done">墨奇输入法已就绪！\n\n您可以在任意输入框中切换到墨奇输入法使用</string>
-    <string name="setup_guide">墨奇输入法 — 本地运行，隐私安全\n\n1. 在系统设置中启用墨奇\n2. 在输入法选择器中切换到墨奇\n3. 开始使用！</string>
-    <string name="setup_enable">去系统设置启用墨奇</string>
-    <string name="setup_select">切换到墨奇输入法</string>
-    <string name="setup_go_settings">输入法设置</string>
+    <string name="setup_guide">墨奇输入法 — 本地运行，隐私安全</string>
+    <string name="setup_step_enable_short">1. 在系统设置中启用墨奇</string>
+    <string name="setup_step_select_short">2. 在输入法选择器中切换到墨奇</string>
+    <string name="setup_step_start_short">3. 开始使用！</string>
+    <string name="setup_enable">系统设置</string>
+    <string name="setup_select">输入法选择器</string>
+    <string name="setup_go_settings">输入法选择器</string>
+    <string name="setup_system_ime_settings">系统设置</string>
+    <string name="setup_input_test">输入测试</string>
+    <string name="input_test_title">输入测试</string>
+    <string name="input_test_hint">点击这里测试墨奇输入法</string>
+    <string name="input_test_guide">可在此页面切换到墨奇输入法，测试候选、标点、方案切换和长按空格语音输入。</string>
 </resources>

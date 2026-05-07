@@ -102,7 +102,7 @@ class KeyboardView @JvmOverloads constructor(
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val desiredHeight = MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 }
             ?: (resources.displayMetrics.heightPixels * 0.28f).toInt()
-        keyGap = (width * 0.006f).coerceAtLeast(4f * resources.displayMetrics.density)
+        keyGap = (width * 0.008f).coerceAtLeast(6f * resources.displayMetrics.density)
         val rowCount = rows.size.coerceAtLeast(1)
         keyHeight = (desiredHeight - keyGap * (rowCount + 1)) / rowCount
 
@@ -125,7 +125,7 @@ class KeyboardView @JvmOverloads constructor(
     private fun updatePaintColors() {
         val dark = isDarkMode
         labelPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
-        labelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(30f) else dp(23f)
+        labelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(30f) else dp(22f)
         labelPaint.textAlign = Paint.Align.CENTER
         subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
         subLabelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(13f) else dp(12f)
@@ -179,9 +179,9 @@ class KeyboardView @JvmOverloads constructor(
         if (subLabel != null && !isSpecialKey(key)) {
             subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
             val subBaseline = if (isT9Layout()) {
-                rect.top + dp(16f)
+                rect.top + dp(18f)
             } else {
-                rect.bottom - dp(10f)
+                rect.bottom - dp(8f)
             }
             canvas.drawText(subLabel, rect.centerX(), subBaseline, subLabelPaint)
         }
@@ -192,7 +192,7 @@ class KeyboardView @JvmOverloads constructor(
         val active = shiftState != ShiftState.LOWER
         val cx = rect.centerX()
         val cy = rect.centerY() - dp(1f)
-        val unit = rect.height().coerceAtMost(rect.width()) * 0.18f
+        val unit = rect.height().coerceAtMost(rect.width()) * 0.15f
         val path = Path().apply {
             moveTo(cx, cy - unit * 1.45f)
             lineTo(cx - unit * 1.55f, cy + unit * 0.2f)
@@ -204,11 +204,11 @@ class KeyboardView @JvmOverloads constructor(
             close()
         }
         iconPaint.style = if (active) Paint.Style.FILL else Paint.Style.STROKE
-        iconPaint.strokeWidth = dp(3f)
+        iconPaint.strokeWidth = dp(2.2f)
         canvas.drawPath(path, iconPaint)
         if (locked) {
             iconPaint.style = Paint.Style.STROKE
-            iconPaint.strokeWidth = dp(2.2f)
+            iconPaint.strokeWidth = dp(1.8f)
             val underlineY = rect.bottom - dp(13f)
             canvas.drawLine(cx - unit * 1.35f, underlineY, cx + unit * 1.35f, underlineY, iconPaint)
         }
@@ -434,15 +434,15 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun qwertyCnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
-        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“", "”", "*", "?")),
-        rowOfWithExtras("zxcvbnm", listOf("(", ")", "-", "_", ":", ";", "/")),
+        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“”", "（）", "*", "?")),
+        rowOfWithExtras("zxcvbnm", listOf("`", "+", "-", "_", "：", "；", "/")),
         bottomRowCn()
     )
 
     private fun qwertyEnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
-        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“", "”", "*", "?")),
-        rowOfWithExtras("zxcvbnm", listOf("(", ")", "-", "_", ":", ";", "/")),
+        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "\"\"", "()", "*", "?")),
+        rowOfWithExtras("zxcvbnm", listOf("`", "+", "-", "_", ":", ";", "/")),
         bottomRowEn()
     )
 

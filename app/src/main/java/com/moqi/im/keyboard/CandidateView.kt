@@ -35,9 +35,12 @@ class CandidateView @JvmOverloads constructor(
     }
     private var candidates: List<CandidateEntry> = emptyList()
     private var itemRects: List<RectF> = emptyList()
+    private var controlRects: List<RectF> = emptyList()
     private var moreButtonRect = RectF()
     private var pressedIndex: Int = -1
+    private var pressedControl: Int = -1
     private var moreButtonPressed = false
+    private var expanded = false
     private var scrollOffset = 0f
     private var maxScrollOffset = 0f
     private var downX = 0f
@@ -47,7 +50,8 @@ class CandidateView @JvmOverloads constructor(
 
     private var onCandidateSelected: ((String) -> Unit)? = null
     private var onCandidateIndexSelected: ((Int) -> Unit)? = null
-    private var onMoreCandidates: (() -> Unit)? = null
+    private var onExpandedChanged: ((Boolean) -> Unit)? = null
+    private var onCandidatePageChange: ((Boolean) -> Unit)? = null
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -64,8 +68,13 @@ class CandidateView @JvmOverloads constructor(
     fun setCandidateEntries(candidates: List<CandidateEntry>) {
         this.candidates = candidates
         pressedIndex = -1
+        pressedControl = -1
         moreButtonPressed = false
         scrollOffset = 0f
+        if (candidates.isEmpty()) {
+            expanded = false
+            onExpandedChanged?.invoke(false)
+        }
         requestLayout()
         invalidate()
     }
@@ -80,8 +89,12 @@ class CandidateView @JvmOverloads constructor(
         onCandidateIndexSelected = listener
     }
 
-    fun setOnMoreCandidatesListener(listener: () -> Unit) {
-        onMoreCandidates = listener
+    fun setOnExpandedChangedListener(listener: (Boolean) -> Unit) {
+        onExpandedChanged = listener
+    }
+
+    fun setOnCandidatePageChangeListener(listener: (Boolean) -> Unit) {
+        onCandidatePageChange = listener
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -95,10 +108,12 @@ class CandidateView @JvmOverloads constructor(
 
         canvas.save()
         canvas.clipRect(0f, 0f, moreButtonRect.left, height.toFloat())
-        canvas.translate(-scrollOffset, 0f)
+        if (!expanded) {
+            canvas.translate(-scrollOffset, 0f)
+        }
         for ((i, rect) in itemRects.withIndex()) {
             if (i >= candidates.size) break
-            if (rect.right < scrollOffset || rect.left > scrollOffset + moreButtonRect.left) continue
+            if (!expanded && (rect.right < scrollOffset || rect.left > scrollOffset + moreButtonRect.left)) continue
 
             val candidate = candidates[i]
             val isSelected = i == pressedIndex
@@ -128,7 +143,11 @@ class CandidateView @JvmOverloads constructor(
                 canvas.drawRoundRect(moreButtonRect, dp(6f), dp(6f), highlightPaint)
             }
             canvas.drawLine(moreButtonRect.left, dp(8f), moreButtonRect.left, height - dp(8f), dividerPaint)
-            drawMoreArrow(canvas)
+            if (expanded) {
+                drawExpandedControls(canvas)
+            } else {
+                drawMoreArrow(canvas)
+            }
         }
 
         if (candidates.isEmpty()) {
@@ -153,17 +172,22 @@ class CandidateView @JvmOverloads constructor(
                 downX = event.x
                 lastX = event.x
                 isDragging = false
-                moreButtonPressed = moreButtonRect.contains(event.x, event.y) && candidates.isNotEmpty()
-                pressedIndex = if (moreButtonPressed) -1 else findItemAt(event.x + scrollOffset)
+                pressedControl = findControlAt(event.x, event.y)
+                moreButtonPressed = (pressedControl >= 0 || moreButtonRect.contains(event.x, event.y)) && candidates.isNotEmpty()
+                pressedIndex = if (moreButtonPressed) -1 else findItemAt(touchContentX(event.x), event.y)
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (moreButtonPressed) {
-                    if (!moreButtonRect.contains(event.x, event.y)) {
+                    if (pressedControl >= 0 && findControlAt(event.x, event.y) != pressedControl) {
                         moreButtonPressed = false
+                        pressedControl = -1
                         invalidate()
                     }
+                    return true
+                }
+                if (expanded) {
                     return true
                 }
                 val dx = lastX - event.x
@@ -180,14 +204,22 @@ class CandidateView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 if (moreButtonPressed) {
-                    if (moreButtonRect.contains(event.x, event.y)) {
-                        onMoreCandidates?.invoke()
+                    val control = findControlAt(event.x, event.y)
+                    if (expanded && control == pressedControl) {
+                        when (control) {
+                            CONTROL_PREV -> onCandidatePageChange?.invoke(true)
+                            CONTROL_NEXT -> onCandidatePageChange?.invoke(false)
+                            CONTROL_COLLAPSE -> setExpanded(false)
+                        }
+                    } else if (!expanded && moreButtonRect.contains(event.x, event.y)) {
+                        setExpanded(true)
                     }
                     moreButtonPressed = false
+                    pressedControl = -1
                     invalidate()
                     return true
                 }
-                val idx = findItemAt(event.x + scrollOffset)
+                val idx = findItemAt(touchContentX(event.x), event.y)
                 if (!isDragging && idx in candidates.indices && idx == pressedIndex) {
                     onCandidateIndexSelected?.invoke(idx)
                     onCandidateSelected?.invoke(candidates[idx].text)
@@ -199,6 +231,7 @@ class CandidateView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 pressedIndex = -1
+                pressedControl = -1
                 moreButtonPressed = false
                 isDragging = false
                 invalidate()
@@ -213,18 +246,57 @@ class CandidateView @JvmOverloads constructor(
         val moreButtonWidth = if (candidates.isEmpty()) 0f else dp(48f)
         val contentWidth = (totalWidth - moreButtonWidth).coerceAtLeast(0f)
         moreButtonRect = RectF(contentWidth, 0f, totalWidth.toFloat(), totalHeight)
-        var x = padding
-        itemRects = candidates.map { candidate ->
-            val desiredWidth = dp(24f) +
-                textPaint.measureText(candidate.text) +
-                if (candidate.comment.isBlank()) 0f else dp(8f) + commentPaint.measureText(candidate.comment)
-            val itemWidth = desiredWidth.coerceAtLeast(dp(62f))
-            RectF(x, 0f, x + itemWidth, totalHeight).also {
-                x += itemWidth
+        if (expanded) {
+            val columns = 3
+            val itemGap = dp(4f)
+            val rowHeight = dp(42f)
+            val itemWidth = ((contentWidth - padding * 2 - itemGap * (columns - 1)) / columns).coerceAtLeast(dp(62f))
+            itemRects = candidates.mapIndexed { index, _ ->
+                val row = index / columns
+                val col = index % columns
+                val left = padding + col * (itemWidth + itemGap)
+                val top = padding + row * rowHeight
+                RectF(left, top, left + itemWidth, top + rowHeight)
             }
+            maxScrollOffset = 0f
+            scrollOffset = 0f
+        } else {
+            var x = padding
+            itemRects = candidates.map { candidate ->
+                val desiredWidth = dp(24f) +
+                    textPaint.measureText(candidate.text) +
+                    if (candidate.comment.isBlank()) 0f else dp(8f) + commentPaint.measureText(candidate.comment)
+                val itemWidth = desiredWidth.coerceAtLeast(dp(62f))
+                RectF(x, 0f, x + itemWidth, totalHeight).also {
+                    x += itemWidth
+                }
+            }
+            maxScrollOffset = (x + padding - contentWidth).coerceAtLeast(0f)
+            scrollOffset = scrollOffset.coerceIn(0f, maxScrollOffset)
         }
-        maxScrollOffset = (x + padding - contentWidth).coerceAtLeast(0f)
-        scrollOffset = scrollOffset.coerceIn(0f, maxScrollOffset)
+        calculateControlRects()
+    }
+
+    private fun setExpanded(value: Boolean) {
+        if (expanded == value) return
+        expanded = value
+        scrollOffset = 0f
+        onExpandedChanged?.invoke(expanded)
+        requestLayout()
+        invalidate()
+    }
+
+    private fun calculateControlRects() {
+        if (!expanded || moreButtonRect.isEmpty) {
+            controlRects = emptyList()
+            return
+        }
+        val buttonHeight = moreButtonRect.height() / 3f
+        controlRects = listOf(
+            RectF(moreButtonRect.left, moreButtonRect.top, moreButtonRect.right, moreButtonRect.top + buttonHeight),
+            RectF(moreButtonRect.left, moreButtonRect.top + buttonHeight, moreButtonRect.right, moreButtonRect.top + buttonHeight * 2f),
+            RectF(moreButtonRect.left, moreButtonRect.top + buttonHeight * 2f, moreButtonRect.right, moreButtonRect.bottom)
+        )
     }
 
     private fun drawMoreArrow(canvas: Canvas) {
@@ -241,12 +313,40 @@ class CandidateView @JvmOverloads constructor(
         canvas.drawPath(path, arrowPaint)
     }
 
-    private fun findItemAt(x: Float): Int {
+    private fun drawExpandedControls(canvas: Canvas) {
+        val labels = listOf("⌃", "⌄", "×")
+        val baselineOffset = -(commentPaint.descent() + commentPaint.ascent()) / 2f
+        commentPaint.textAlign = Paint.Align.CENTER
+        commentPaint.color = if (isDarkMode) 0xFFB8C0C8.toInt() else 0xFF69727D.toInt()
+        for ((index, rect) in controlRects.withIndex()) {
+            if (index == pressedControl && moreButtonPressed) {
+                canvas.drawRoundRect(rect, dp(6f), dp(6f), highlightPaint)
+            }
+            if (index > 0) {
+                canvas.drawLine(rect.left + dp(8f), rect.top, rect.right - dp(8f), rect.top, dividerPaint)
+            }
+            canvas.drawText(labels[index], rect.centerX(), rect.centerY() + baselineOffset, commentPaint)
+        }
+        commentPaint.textAlign = Paint.Align.LEFT
+    }
+
+    private fun findItemAt(x: Float, y: Float): Int {
         itemRects.forEachIndexed { i, rect ->
-            if (rect.contains(x, rect.centerY())) return i
+            val hitY = if (expanded) y else rect.centerY()
+            if (rect.contains(x, hitY)) return i
         }
         return -1
     }
+
+    private fun findControlAt(x: Float, y: Float): Int {
+        if (!expanded) return -1
+        controlRects.forEachIndexed { index, rect ->
+            if (rect.contains(x, y)) return index
+        }
+        return -1
+    }
+
+    private fun touchContentX(x: Float): Float = if (expanded) x else x + scrollOffset
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
@@ -259,5 +359,8 @@ class CandidateView @JvmOverloads constructor(
     companion object {
         private const val DARK_BG = 0xFF20262C.toInt()
         private const val LIGHT_BG = 0xFFF7F8FA.toInt()
+        private const val CONTROL_PREV = 0
+        private const val CONTROL_NEXT = 1
+        private const val CONTROL_COLLAPSE = 2
     }
 }

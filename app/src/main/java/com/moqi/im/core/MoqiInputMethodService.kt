@@ -65,7 +65,7 @@ class MoqiInputMethodService : InputMethodService() {
     override fun setInputView(view: View) {
         super.setInputView(view)
         val screenHeight = resources.displayMetrics.heightPixels
-        val imeHeight = (screenHeight * 0.35).toInt()
+        val imeHeight = (screenHeight * 0.32).toInt()
         view.layoutParams?.height = imeHeight
         val inputArea = window?.window?.decorView?.findViewById<FrameLayout>(android.R.id.inputArea)
         inputArea?.layoutParams?.height = imeHeight
@@ -212,12 +212,15 @@ class MoqiInputMethodService : InputMethodService() {
                 applyMoqiResult(engineResult.result)
             }
         }
-        candidateView?.setOnMoreCandidatesListener {
+        candidateView?.setOnExpandedChangedListener { expanded ->
+            setCandidateExpanded(expanded)
+        }
+        candidateView?.setOnCandidatePageChangeListener { backward ->
             if (!::engineRunner.isInitialized) {
                 showRimeInitializingIfNeeded()
-                return@setOnMoreCandidatesListener
+                return@setOnCandidatePageChangeListener
             }
-            engineRunner.changeCandidatePage(backward = false) { engineResult ->
+            engineRunner.changeCandidatePage(backward = backward) { engineResult ->
                 applyMoqiResult(engineResult.result)
             }
         }
@@ -267,13 +270,21 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.TEXT_DOT_COM -> commitText(".com")
             KeyCode.EXIT_VOICE -> exitVoiceMode()
             KeyCode.COMMA -> {
-                submitMoqiKey(','.code, ','.code, fallbackOnSuccessOnly = true) {
-                    commitText("，")
+                if (currentMode == InputMode.ENGLISH) {
+                    commitText(",")
+                } else {
+                    submitMoqiKey(','.code, ','.code, fallbackOnSuccessOnly = true) {
+                        commitText("，")
+                    }
                 }
             }
             KeyCode.PERIOD -> {
-                submitMoqiKey(MoqiImeKeyMapper.VK_OEM_PERIOD, '.'.code, fallbackOnSuccessOnly = true) {
-                    commitText("。")
+                if (currentMode == InputMode.ENGLISH) {
+                    commitText(".")
+                } else {
+                    submitMoqiKey(MoqiImeKeyMapper.VK_OEM_PERIOD, '.'.code, fallbackOnSuccessOnly = true) {
+                        commitText("。")
+                    }
                 }
             }
             KeyCode.SWITCH_TO_QWERTY -> {
@@ -297,17 +308,52 @@ class MoqiInputMethodService : InputMethodService() {
     private fun handleSwipeText(text: String) {
         if (text.isBlank()) return
         performKeyVibration()
+        val normalizedText = normalizeSwipeTextForMode(text)
         if (currentMode == InputMode.ENGLISH) {
-            commitText(text)
+            if (isPairedSymbol(normalizedText)) {
+                commitPairedText(normalizedText)
+                return
+            }
+            commitText(normalizedText)
             return
         }
-        if (text.length == 1) {
-            val ch = text[0]
+        if (isPairedSymbol(normalizedText)) {
+            commitPairedText(normalizedText)
+            return
+        }
+        if (normalizedText.length == 1) {
+            val ch = normalizedText[0]
             submitMoqiKey(ch.code, ch.code, fallbackOnSuccessOnly = true) {
-                commitText(text)
+                commitText(normalizedText)
             }
         } else {
-            commitText(text)
+            commitText(normalizedText)
+        }
+    }
+
+    private fun isPairedSymbol(text: String): Boolean {
+        return text == "“”" || text == "（）" || text == "\"\"" || text == "()"
+    }
+
+    private fun normalizeSwipeTextForMode(text: String): String {
+        return if (currentMode == InputMode.ENGLISH) {
+            when (text) {
+                "“”" -> "\"\""
+                "（）" -> "()"
+                "，" -> ","
+                "。" -> "."
+                "：" -> ":"
+                "；" -> ";"
+                else -> text
+            }
+        } else {
+            when (text) {
+                "\"\"" -> "“”"
+                "()" -> "（）"
+                ":" -> "："
+                ";" -> "；"
+                else -> text
+            }
         }
     }
 
@@ -375,13 +421,16 @@ class MoqiInputMethodService : InputMethodService() {
         currentInputConnection.commitText(text, 1)
     }
 
+    private fun commitPairedText(text: String) {
+        currentInputConnection.commitText(text, 1)
+        sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
+    }
+
     private fun handleCharacter(keyCode: Int, charCode: Int) {
         if (currentMode == InputMode.ENGLISH) {
             commitText(charCode.toChar().toString())
         } else {
-            submitMoqiKey(keyCode, charCode, fallbackOnSuccessOnly = true) {
-                commitText(charCode.toChar().toString())
-            }
+            submitMoqiKey(keyCode, charCode, retryFullPinyinOnUnhandled = true)
         }
         if (shiftActive && !shiftLocked) {
             shiftActive = false
@@ -612,6 +661,7 @@ class MoqiInputMethodService : InputMethodService() {
         charCode: Int = 0,
         fallbackOnSuccessOnly: Boolean = false,
         fallbackOnFailure: Boolean = false,
+        retryFullPinyinOnUnhandled: Boolean = false,
         fallback: (() -> Unit)? = null
     ) {
         if (!::engineRunner.isInitialized) {
@@ -625,10 +675,41 @@ class MoqiInputMethodService : InputMethodService() {
             val result = engineResult.result
             Log.d(TAG, "engineResult seq=${engineResult.sequence} mode=$currentMode keyCode=$keyCode charCode=$charCode success=${result.success} handled=${result.handled} composition=${result.composition} commit=${result.commit} candidates=${result.candidates.size} error=${result.error}")
             val handled = applyMoqiResult(result)
+            if (!handled && shouldRetryWithFullPinyin(result, charCode, retryFullPinyinOnUnhandled)) {
+                retryKeyWithFullPinyin(keyCode, charCode)
+                return@keyDown
+            }
             val shouldFallback = fallback != null && !handled &&
                 ((fallbackOnSuccessOnly && result.success) || fallbackOnFailure || (!fallbackOnSuccessOnly && result.success))
             if (shouldFallback) {
                 fallback?.invoke()
+            }
+        }
+    }
+
+    private fun shouldRetryWithFullPinyin(
+        result: MoqiImeResult,
+        charCode: Int,
+        retryFullPinyinOnUnhandled: Boolean
+    ): Boolean {
+        if (!retryFullPinyinOnUnhandled || !result.success || result.handled) return false
+        if (currentMode != InputMode.PINYIN) return false
+        if (result.composition.isNotBlank() || result.commit.isNotBlank()) return false
+        if (charCode !in 'a'.code..'z'.code && charCode !in 'A'.code..'Z'.code) return false
+        return currentSchemaId.contains("double_pinyin", ignoreCase = true)
+    }
+
+    private fun retryKeyWithFullPinyin(keyCode: Int, charCode: Int) {
+        val targetSchema = "rime_frost"
+        Log.d(TAG, "retry unhandled alphabet key with full pinyin schema current=$currentSchemaId target=$targetSchema charCode=$charCode")
+        engineRunner.selectSchema(targetSchema) { schemaResult, schemaId ->
+            if (!schemaResult.result.success) {
+                applyMoqiResult(schemaResult.result)
+                return@selectSchema
+            }
+            applySchemaLayout(schemaId.ifBlank { targetSchema })
+            engineRunner.keyDown(keyCode, charCode) { retryResult ->
+                applyMoqiResult(retryResult.result)
             }
         }
     }
@@ -736,6 +817,21 @@ class MoqiInputMethodService : InputMethodService() {
         }
         keyboardView?.setShiftState(state)
     }
+
+    private fun setCandidateExpanded(expanded: Boolean) {
+        val view = candidateView ?: return
+        val targetHeight = if (expanded) {
+            dp(168)
+        } else {
+            resources.getDimensionPixelSize(com.moqi.im.R.dimen.candidate_height)
+        }
+        val params = view.layoutParams
+        if (params.height == targetHeight) return
+        params.height = targetHeight
+        view.layoutParams = params
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun showMenuPanel() {
         keyboardView?.visibility = View.GONE

@@ -31,6 +31,13 @@
             android:label="@string/settings_title"
             android:theme="@style/Theme.MoqiIM" />
 
+        <activity
+            android:name=".settings.InputTestActivity"
+            android:exported="true"
+            android:label="@string/input_test_title"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize"
+            android:theme="@style/Theme.MoqiIM" />
+
         <service
             android:name=".core.MoqiInputMethodService"
             android:exported="true"
