@@ -51,6 +51,7 @@ dependencies {
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation(files("libs/sherpa-onnx-1.13.0.aar"))
+    implementation(files("libs/moqi-ime.aar"))
 }
 
 // 应用模型下载脚本（可选：构建时自动下载模型）

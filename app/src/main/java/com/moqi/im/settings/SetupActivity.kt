@@ -1,6 +1,5 @@
 package com.moqi.im.settings
 
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -13,29 +12,16 @@ import com.moqi.im.R
 
 class SetupActivity : AppCompatActivity() {
 
-    private var step = 0
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_setup)
 
         findViewById<Button>(R.id.btn_enable_ime).setOnClickListener {
-            if (step == 0) {
-                val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                startActivity(intent)
-                step = 1
-                updateUI()
-            } else {
-                val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                startActivity(intent)
-            }
+            openInputMethodSettings()
         }
 
         findViewById<Button>(R.id.btn_select_ime).setOnClickListener {
-            val inputMethodManager = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            inputMethodManager.showInputMethodPicker()
+            showInputMethodPicker()
         }
 
         findViewById<Button>(R.id.btn_go_settings).setOnClickListener {
@@ -63,13 +49,11 @@ class SetupActivity : AppCompatActivity() {
                 statusText.text = getString(R.string.setup_step1)
                 btnEnable.visibility = View.VISIBLE
                 btnSelect.visibility = View.GONE
-                step = 0
             }
             !selected -> {
                 statusText.text = getString(R.string.setup_step2)
                 btnEnable.visibility = View.GONE
                 btnSelect.visibility = View.VISIBLE
-                step = 1
             }
             else -> {
                 statusText.text = getString(R.string.setup_done)
@@ -87,7 +71,18 @@ class SetupActivity : AppCompatActivity() {
 
     private fun isImeSelected(): Boolean {
         val inputMethodManager = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-        val selectedIMEs = inputMethodManager.currentInputMethodSubtype
         return inputMethodManager.currentInputMethodInfo?.packageName == packageName
+    }
+
+    private fun openInputMethodSettings() {
+        val intent = Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        startActivity(intent)
+    }
+
+    private fun showInputMethodPicker() {
+        val inputMethodManager = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        inputMethodManager.showInputMethodPicker()
     }
 }

@@ -1,23 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.moqi.im.settings.SettingsActivity"
-    android:supportsSwitchingToNextInputMethod="true">
-    <subtype
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeLocale="zh_CN"
-        android:label="@string/subtype_pinyin"
-        android:isAuxiliary="false"
-        android:imeSubtypeExtraValue="default=yes" />
-    <subtype
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeLocale="zh_CN"
-        android:label="@string/subtype_wubi"
-        android:isAuxiliary="false"
-        android:imeSubtypeExtraValue="" />
-    <subtype
-        android:imeSubtypeMode="keyboard"
-        android:imeSubtypeLocale="en_US"
-        android:label="@string/subtype_english"
-        android:isAuxiliary="false"
-        android:imeSubtypeExtraValue="" />
-</input-method>
+    android:supportsSwitchingToNextInputMethod="true" />

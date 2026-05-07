@@ -21,6 +21,7 @@ class CandidateView @JvmOverloads constructor(
     private var pressedIndex: Int = -1
 
     private var onCandidateSelected: ((String) -> Unit)? = null
+    private var onCandidateIndexSelected: ((Int) -> Unit)? = null
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -44,6 +45,10 @@ class CandidateView @JvmOverloads constructor(
 
     fun setOnCandidateSelectedListener(listener: (String) -> Unit) {
         onCandidateSelected = listener
+    }
+
+    fun setOnCandidateIndexSelectedListener(listener: (Int) -> Unit) {
+        onCandidateIndexSelected = listener
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -92,6 +97,7 @@ class CandidateView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 val idx = findItemAt(event.x)
                 if (idx in candidates.indices && idx == pressedIndex) {
+                    onCandidateIndexSelected?.invoke(idx)
                     onCandidateSelected?.invoke(candidates[idx])
                 }
                 pressedIndex = -1

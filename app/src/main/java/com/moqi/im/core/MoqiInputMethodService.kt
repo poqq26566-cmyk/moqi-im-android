@@ -8,27 +8,28 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
-import com.moqi.im.engine.EngineFactory
-import com.moqi.im.engine.InputEngine
 import com.moqi.im.engine.InputMode
+import com.moqi.im.engine.MoqiImeKeyMapper
+import com.moqi.im.engine.MoqiImeResult
+import com.moqi.im.engine.MoqiImeSession
 import com.moqi.im.engine.SherpaVoiceEngine
 import com.moqi.im.keyboard.CandidateView
 import com.moqi.im.keyboard.ComposeView
 import com.moqi.im.keyboard.KeyCode
 import com.moqi.im.keyboard.KeyboardView
 import com.moqi.im.voice.ModelManager
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import mobilebridge.Mobilebridge
 
 class MoqiInputMethodService : InputMethodService() {
+    companion object {
+        private const val TAG = "MoqiInputMethodService"
+    }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
 
@@ -55,7 +56,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private var currentMode: InputMode = InputMode.PINYIN
-    private var engine: InputEngine = EngineFactory.create(InputMode.PINYIN)
+    private var moqiImeSession: MoqiImeSession = MoqiImeSession()
     private var composingText: StringBuilder = StringBuilder()
 
     private var keyboardView: KeyboardView? = null
@@ -106,8 +107,8 @@ class MoqiInputMethodService : InputMethodService() {
             handleKey(keyCode, isShifted)
         }
 
-        candidateView?.setOnCandidateSelectedListener { candidate ->
-            commitCandidate(candidate)
+        candidateView?.setOnCandidateIndexSelectedListener { index ->
+            applyMoqiResult(moqiImeSession.selectCandidate(index))
         }
 
         updateKeyboard()
@@ -116,8 +117,7 @@ class MoqiInputMethodService : InputMethodService() {
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        composingText.clear()
-        engine.reset()
+        resetTextEngine()
         updateUI()
     }
 
@@ -144,13 +144,19 @@ class MoqiInputMethodService : InputMethodService() {
                 }
             }
             KeyCode.EXIT_VOICE -> exitVoiceMode()
-            KeyCode.COMMA -> commitText("，")
-            KeyCode.PERIOD -> commitText("。")
+            KeyCode.COMMA -> {
+                val result = moqiImeSession.keyDown(','.code, ','.code)
+                if (!applyMoqiResult(result)) commitText("，")
+            }
+            KeyCode.PERIOD -> {
+                val result = moqiImeSession.keyDown(MoqiImeKeyMapper.VK_OEM_PERIOD, '.'.code)
+                if (!applyMoqiResult(result)) commitText("。")
+            }
             KeyCode.SWITCH_TO_QWERTY -> {
                 isT9Mode = false
                 if (currentMode == InputMode.VOICE) {
                     currentMode = modeBeforeVoice
-                    engine = EngineFactory.create(currentMode)
+                    resetTextEngine()
                 }
                 updateKeyboard()
                 resetT9State()
@@ -159,16 +165,16 @@ class MoqiInputMethodService : InputMethodService() {
                 isT9Mode = true
                 if (currentMode == InputMode.VOICE) {
                     currentMode = modeBeforeVoice
-                    engine = EngineFactory.create(currentMode)
+                    resetTextEngine()
                 }
                 updateKeyboard()
                 resetT9State()
             }
             in KeyCode.T9_1..KeyCode.T9_POUND -> handleT9Key(keyCode)
             else -> {
-                val ch = keyCodeToChar(keyCode, isShifted || shiftActive)
-                if (ch != null) {
-                    handleCharacter(ch)
+                val mapped = MoqiImeKeyMapper.fromAndroidKeyCode(keyCode, isShifted || shiftActive)
+                if (mapped != null) {
+                    handleCharacter(mapped.first, mapped.second)
                 }
             }
         }
@@ -221,10 +227,10 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.T9_9 -> '9'
             else -> return
         }
-        composingText.append(digit)
-        val candidates = engine.processInput(composingText.toString())
-        updateCandidates(candidates)
-        updateComposeView()
+        val result = moqiImeSession.keyDown(digit.code, digit.code)
+        if (!applyMoqiResult(result) && currentMode == InputMode.ENGLISH) {
+            commitText(digit.toString())
+        }
     }
 
     private fun resetT9State() {
@@ -237,11 +243,17 @@ class MoqiInputMethodService : InputMethodService() {
         currentInputConnection.commitText(text, 1)
     }
 
-    private fun handleCharacter(ch: Char) {
-        composingText.append(ch)
-        val candidates = engine.processInput(composingText.toString())
-        updateCandidates(candidates)
-        updateComposeView()
+    private fun handleCharacter(keyCode: Int, charCode: Int) {
+        if (currentMode == InputMode.ENGLISH) {
+            commitText(charCode.toChar().toString())
+        } else {
+            val result = moqiImeSession.keyDown(keyCode, charCode)
+            Log.d(TAG, "handleCharacter mode=$currentMode keyCode=$keyCode charCode=$charCode success=${result.success} handled=${result.handled} composition=${result.composition} commit=${result.commit} candidates=${result.candidates.size} error=${result.error}")
+            val handled = applyMoqiResult(result)
+            if (result.success && !handled && charCode >= 0x20) {
+                commitText(charCode.toChar().toString())
+            }
+        }
         if (shiftActive && !shiftLocked) {
             shiftActive = false
             keyboardView?.setShifted(false)
@@ -249,46 +261,22 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun handleBackspace() {
-        if (composingText.isNotEmpty()) {
-            composingText.deleteCharAt(composingText.length - 1)
-            if (composingText.isEmpty()) {
-                engine.reset()
-                candidateView?.setCandidates(emptyList())
-            } else {
-                val candidates = engine.processInput(composingText.toString())
-                candidateView?.setCandidates(candidates)
-            }
-            updateComposeView()
-        } else {
+        val result = moqiImeSession.keyDown(MoqiImeKeyMapper.VK_BACK)
+        if (!applyMoqiResult(result)) {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
         }
     }
 
     private fun handleEnter() {
-        if (composingText.isNotEmpty()) {
-            currentInputConnection.commitText(composingText.toString(), 1)
-            composingText.clear()
-            engine.reset()
-            candidateView?.setCandidates(emptyList())
-            updateComposeView()
-        } else {
+        val result = moqiImeSession.keyDown(MoqiImeKeyMapper.VK_RETURN)
+        if (!applyMoqiResult(result)) {
             sendKeyChar('\n')
         }
     }
 
     private fun handleSpace() {
-        if (composingText.isNotEmpty()) {
-            val first = candidateView?.getFirstCandidate()
-            if (first != null) {
-                commitCandidate(first)
-            } else {
-                currentInputConnection.commitText(composingText.toString(), 1)
-                composingText.clear()
-                engine.reset()
-                candidateView?.setCandidates(emptyList())
-                updateComposeView()
-            }
-        } else {
+        val result = moqiImeSession.keyDown(MoqiImeKeyMapper.VK_SPACE, ' '.code)
+        if (!applyMoqiResult(result)) {
             sendKeyChar(' ')
         }
     }
@@ -381,31 +369,56 @@ class MoqiInputMethodService : InputMethodService() {
     private fun exitVoiceMode() {
         stopVoiceListening()
         currentMode = modeBeforeVoice
-        engine = EngineFactory.create(currentMode)
-        composingText.clear()
-        engine.reset()
-        candidateView?.setCandidates(emptyList())
-        updateComposeView()
+        resetTextEngine()
         updateKeyboard()
     }
 
     private fun switchMode(mode: InputMode) {
         if (currentMode == InputMode.VOICE) stopVoiceListening()
         currentMode = mode
-        engine = EngineFactory.create(mode)
-        composingText.clear()
-        engine.reset()
-        candidateView?.setCandidates(emptyList())
-        updateComposeView()
+        resetTextEngine()
         updateKeyboard()
     }
 
-    private fun commitCandidate(candidate: String) {
-        currentInputConnection.commitText(candidate, 1)
+    private fun resetTextEngine() {
+        moqiImeSession.close()
+        moqiImeSession = newMoqiImeSession(currentMode)
         composingText.clear()
-        engine.reset()
         candidateView?.setCandidates(emptyList())
         updateComposeView()
+    }
+
+    private fun guidForMode(mode: InputMode): String {
+        return when (mode) {
+            InputMode.PINYIN, InputMode.WUBI -> Mobilebridge.GUIDRime
+            else -> Mobilebridge.GUIDMoqi
+        }
+    }
+
+    private fun applyMoqiResult(result: MoqiImeResult): Boolean {
+        if (!result.success) {
+            Log.w(TAG, "moqi-ime result failed: ${result.error}")
+            if (result.error.isNotBlank()) {
+                composeView?.setComposingText(result.error)
+            }
+            return false
+        }
+
+        if (result.commit.isNotBlank()) {
+            currentInputConnection.commitText(result.commit, 1)
+        }
+
+        composingText.clear()
+        composingText.append(result.composition)
+        updateComposeView()
+
+        if (result.showCandidates) {
+            updateCandidates(result.candidates)
+        } else {
+            updateCandidates(emptyList())
+        }
+
+        return result.handled
     }
 
     private fun updateUI() {
@@ -438,48 +451,6 @@ class MoqiInputMethodService : InputMethodService() {
         keyboardView?.setLayout(layout)
     }
 
-    private fun keyCodeToChar(keyCode: Int, shifted: Boolean): Char? {
-        return when (keyCode) {
-            KeyEvent.KEYCODE_A -> if (shifted) 'A' else 'a'
-            KeyEvent.KEYCODE_B -> if (shifted) 'B' else 'b'
-            KeyEvent.KEYCODE_C -> if (shifted) 'C' else 'c'
-            KeyEvent.KEYCODE_D -> if (shifted) 'D' else 'd'
-            KeyEvent.KEYCODE_E -> if (shifted) 'E' else 'e'
-            KeyEvent.KEYCODE_F -> if (shifted) 'F' else 'f'
-            KeyEvent.KEYCODE_G -> if (shifted) 'G' else 'g'
-            KeyEvent.KEYCODE_H -> if (shifted) 'H' else 'h'
-            KeyEvent.KEYCODE_I -> if (shifted) 'I' else 'i'
-            KeyEvent.KEYCODE_J -> if (shifted) 'J' else 'j'
-            KeyEvent.KEYCODE_K -> if (shifted) 'K' else 'k'
-            KeyEvent.KEYCODE_L -> if (shifted) 'L' else 'l'
-            KeyEvent.KEYCODE_M -> if (shifted) 'M' else 'm'
-            KeyEvent.KEYCODE_N -> if (shifted) 'N' else 'n'
-            KeyEvent.KEYCODE_O -> if (shifted) 'O' else 'o'
-            KeyEvent.KEYCODE_P -> if (shifted) 'P' else 'p'
-            KeyEvent.KEYCODE_Q -> if (shifted) 'Q' else 'q'
-            KeyEvent.KEYCODE_R -> if (shifted) 'R' else 'r'
-            KeyEvent.KEYCODE_S -> if (shifted) 'S' else 's'
-            KeyEvent.KEYCODE_T -> if (shifted) 'T' else 't'
-            KeyEvent.KEYCODE_U -> if (shifted) 'U' else 'u'
-            KeyEvent.KEYCODE_V -> if (shifted) 'V' else 'v'
-            KeyEvent.KEYCODE_W -> if (shifted) 'W' else 'w'
-            KeyEvent.KEYCODE_X -> if (shifted) 'X' else 'x'
-            KeyEvent.KEYCODE_Y -> if (shifted) 'Y' else 'y'
-            KeyEvent.KEYCODE_Z -> if (shifted) 'Z' else 'z'
-            KeyEvent.KEYCODE_1 -> '1'
-            KeyEvent.KEYCODE_2 -> '2'
-            KeyEvent.KEYCODE_3 -> '3'
-            KeyEvent.KEYCODE_4 -> '4'
-            KeyEvent.KEYCODE_5 -> '5'
-            KeyEvent.KEYCODE_6 -> '6'
-            KeyEvent.KEYCODE_7 -> '7'
-            KeyEvent.KEYCODE_8 -> '8'
-            KeyEvent.KEYCODE_9 -> '9'
-            KeyEvent.KEYCODE_0 -> '0'
-            else -> null
-        }
-    }
-
     private fun loadInputModePreference() {
         val prefs = getSharedPreferences("moqi_im_prefs", MODE_PRIVATE)
         val modeStr = prefs.getString("input_mode", "pinyin") ?: "pinyin"
@@ -488,7 +459,15 @@ class MoqiInputMethodService : InputMethodService() {
             "english" -> InputMode.ENGLISH
             else -> InputMode.PINYIN
         }
-        engine = EngineFactory.create(currentMode)
+        moqiImeSession.close()
+        moqiImeSession = newMoqiImeSession(currentMode)
+    }
+
+    private fun newMoqiImeSession(mode: InputMode): MoqiImeSession {
+        return MoqiImeSession(
+            guid = guidForMode(mode),
+            androidDataDir = applicationContext.filesDir.absolutePath
+        )
     }
 
     private fun launchSettings() {
@@ -503,6 +482,7 @@ class MoqiInputMethodService : InputMethodService() {
         stopVoiceListening()
         sherpaVoiceEngine?.destroy()
         sherpaVoiceEngine = null
+        moqiImeSession.close()
         keyboardView = null
         candidateView = null
         composeView = null
