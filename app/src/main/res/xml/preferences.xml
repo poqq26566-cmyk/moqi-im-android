@@ -8,6 +8,14 @@
             android:entries="@array/input_mode_entries"
             android:entryValues="@array/input_mode_values"
             android:defaultValue="pinyin" />
+        <ListPreference
+            android:key="rime_scheme_set"
+            android:title="@string/pref_rime_scheme_set"
+            android:summary="@string/pref_rime_loading" />
+        <ListPreference
+            android:key="rime_schema"
+            android:title="@string/pref_rime_schema"
+            android:summary="@string/pref_rime_loading" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="键盘">

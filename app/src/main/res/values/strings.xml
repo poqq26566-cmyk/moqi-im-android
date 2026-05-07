@@ -14,6 +14,11 @@
     <string name="pref_wubi">五笔输入</string>
     <string name="pref_english">英文输入</string>
     <string name="pref_voice">语音输入</string>
+    <string name="pref_rime_scheme_set">Rime 方案集</string>
+    <string name="pref_rime_schema">当前输入方案</string>
+    <string name="pref_rime_loading">正在读取 Rime 配置…</string>
+    <string name="pref_rime_empty">未发现可用方案</string>
+    <string name="pref_rime_switch_failed">切换失败</string>
     <string name="pref_keyboard_height">键盘高度</string>
     <string name="pref_sound">按键音效</string>
     <string name="pref_vibrate">按键振动</string>

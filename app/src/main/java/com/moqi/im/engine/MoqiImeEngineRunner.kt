@@ -1,0 +1,181 @@
+package com.moqi.im.engine
+
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicLong
+
+class MoqiImeEngineRunner(
+    private val androidDataDir: String,
+    initialGuid: String
+) {
+    data class EngineResult(
+        val sequence: Long,
+        val result: MoqiImeResult
+    )
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val executor: ExecutorService = Executors.newSingleThreadExecutor(EngineThreadFactory())
+    private val requestSequence = AtomicLong(0L)
+    private val generation = AtomicLong(0L)
+
+    private var session: MoqiImeSession? = null
+    private var currentGuid: String = initialGuid
+
+    init {
+        executor.execute {
+            session = MoqiImeSession(
+                guid = initialGuid,
+                androidDataDir = androidDataDir
+            )
+        }
+    }
+
+    fun resetSession(guid: String, onReady: ((String) -> Unit)? = null) {
+        val targetGeneration = generation.incrementAndGet()
+        executor.execute {
+            if (session != null && currentGuid == guid) {
+                val result = session?.reset()
+                val schemaId = session?.currentSchemaId().orEmpty()
+                Log.d(TAG, "reuse session for reset guid=$guid success=${result?.success}")
+                postIfCurrent(targetGeneration) {
+                    onReady?.invoke(schemaId)
+                }
+                return@execute
+            }
+            val oldSession = session
+            val newSession = MoqiImeSession(guid = guid, androidDataDir = androidDataDir)
+            oldSession?.close()
+            session = newSession
+            currentGuid = guid
+            val schemaId = newSession.currentSchemaId()
+            postIfCurrent(targetGeneration) {
+                onReady?.invoke(schemaId)
+            }
+        }
+    }
+
+    fun resetComposition(callback: ((EngineResult) -> Unit)? = null) {
+        submit("resetComposition", callback ?: {}) {
+            session?.reset() ?: notReadyResult()
+        }
+    }
+
+    fun keyDown(keyCode: Int, charCode: Int = 0, callback: (EngineResult) -> Unit) {
+        submit("keyDown key=$keyCode char=$charCode", callback) {
+            session?.keyDown(keyCode, charCode) ?: notReadyResult()
+        }
+    }
+
+    fun selectCandidate(index: Int, callback: (EngineResult) -> Unit) {
+        submit("selectCandidate index=$index", callback) {
+            session?.selectCandidate(index) ?: notReadyResult()
+        }
+    }
+
+    fun command(commandId: Int, callback: (EngineResult) -> Unit) {
+        submit("command id=$commandId", callback) {
+            session?.command(commandId) ?: notReadyResult()
+        }
+    }
+
+    fun selectSchema(schemaId: String, callback: (EngineResult, String) -> Unit) {
+        val requestId = requestSequence.incrementAndGet()
+        val targetGeneration = generation.get()
+        executor.execute {
+            val start = System.nanoTime()
+            val activeSession = session
+            val result = activeSession?.selectSchema(schemaId) ?: notReadyResult()
+            val currentSchemaId = activeSession?.currentSchemaId().orEmpty()
+            logDuration("selectSchema", start, "request=$requestId schemaId=$schemaId success=${result.success}")
+            postIfCurrent(targetGeneration) {
+                callback(EngineResult(requestId, result), currentSchemaId)
+            }
+        }
+    }
+
+    fun currentSchemaId(callback: (String) -> Unit) {
+        val targetGeneration = generation.get()
+        executor.execute {
+            val schemaId = session?.currentSchemaId().orEmpty()
+            postIfCurrent(targetGeneration) {
+                callback(schemaId)
+            }
+        }
+    }
+
+    fun close() {
+        generation.incrementAndGet()
+        executor.execute {
+            session?.close()
+            session = null
+        }
+        executor.shutdown()
+        mainHandler.removeCallbacksAndMessages(null)
+    }
+
+    private fun submit(
+        label: String,
+        callback: (EngineResult) -> Unit,
+        action: () -> MoqiImeResult
+    ) {
+        val requestId = requestSequence.incrementAndGet()
+        val targetGeneration = generation.get()
+        executor.execute {
+            val start = System.nanoTime()
+            val result = action()
+            logDuration(label, start, "request=$requestId success=${result.success} handled=${result.handled}")
+            postIfCurrent(targetGeneration) {
+                callback(EngineResult(requestId, result))
+            }
+        }
+    }
+
+    private fun postIfCurrent(targetGeneration: Long, action: () -> Unit) {
+        mainHandler.post {
+            if (generation.get() == targetGeneration) {
+                action()
+            } else {
+                Log.d(TAG, "discard stale engine callback generation=$targetGeneration current=${generation.get()}")
+            }
+        }
+    }
+
+    private fun notReadyResult(): MoqiImeResult {
+        return MoqiImeResult(
+            success = false,
+            handled = false,
+            composition = "",
+            commit = "",
+            candidates = emptyList(),
+            showCandidates = false,
+            error = "moqi-ime engine is not ready"
+        )
+    }
+
+    private fun logDuration(operation: String, startNanos: Long, details: String) {
+        val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+        val message = "$operation took=${elapsedMs}ms $details"
+        if (elapsedMs >= SLOW_LOG_THRESHOLD_MS) {
+            Log.w(TAG, message)
+        } else {
+            Log.d(TAG, message)
+        }
+    }
+
+    private class EngineThreadFactory : ThreadFactory {
+        override fun newThread(runnable: Runnable): Thread {
+            return Thread(runnable, "moqi-ime-engine").apply {
+                isDaemon = true
+            }
+        }
+    }
+
+    companion object {
+        private const val TAG = "MoqiImeEngineRunner"
+        private const val SLOW_LOG_THRESHOLD_MS = 30L
+    }
+}

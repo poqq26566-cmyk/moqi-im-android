@@ -33,6 +33,8 @@ class KeyboardView @JvmOverloads constructor(
     private var rows: List<List<KeyDefinition>> = emptyList()
     private var keyRects: List<List<RectF>> = emptyList()
     private var pressedKey: Pair<Int, Int>? = null
+    private var repeatingKey: Pair<Int, Int>? = null
+    private var repeatRunnable: Runnable? = null
 
     private var isShifted: Boolean = false
     private var onKeyListener: ((Int, Boolean) -> Unit)? = null
@@ -158,31 +160,79 @@ class KeyboardView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+            MotionEvent.ACTION_DOWN -> {
                 val hit = findKeyAt(event.x, event.y)
-                if (hit != pressedKey) {
-                    pressedKey = hit
-                    invalidate()
-                }
-                return true
-            }
-            MotionEvent.ACTION_UP -> {
-                pressedKey?.let { (row, col) ->
-                    rows.getOrNull(row)?.getOrNull(col)?.let { key ->
-                        onKeyListener?.invoke(key.keyCode, isShifted)
-                    }
-                }
-                pressedKey = null
+                pressedKey = hit
+                startKeyRepeatIfNeeded(hit)
                 invalidate()
                 return true
             }
+            MotionEvent.ACTION_MOVE -> {
+                val hit = findKeyAt(event.x, event.y)
+                if (hit == pressedKey) return true
+                stopKeyRepeat()
+                pressedKey = hit
+                startKeyRepeatIfNeeded(hit)
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val repeatWasActive = repeatRunnable != null
+                pressedKey?.let { keyPos ->
+                    if (!repeatWasActive) {
+                        dispatchKey(keyPos)
+                    }
+                }
+                stopKeyRepeat()
+                pressedKey = null
+                invalidate()
+                performClick()
+                return true
+            }
             MotionEvent.ACTION_CANCEL -> {
+                stopKeyRepeat()
                 pressedKey = null
                 invalidate()
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean {
+        super.performClick()
+        return true
+    }
+
+    private fun startKeyRepeatIfNeeded(keyPos: Pair<Int, Int>?) {
+        stopKeyRepeat()
+        val key = keyPos?.let { (row, col) -> rows.getOrNull(row)?.getOrNull(col) } ?: return
+        if (!key.isRepeatable) return
+
+        repeatingKey = keyPos
+        dispatchKey(keyPos)
+        repeatRunnable = object : Runnable {
+            override fun run() {
+                if (repeatingKey == keyPos && pressedKey == keyPos) {
+                    dispatchKey(keyPos)
+                    postDelayed(this, KEY_REPEAT_INTERVAL_MS)
+                }
+            }
+        }
+        postDelayed(repeatRunnable!!, KEY_REPEAT_INITIAL_DELAY_MS)
+    }
+
+    private fun stopKeyRepeat() {
+        repeatRunnable?.let { removeCallbacks(it) }
+        repeatRunnable = null
+        repeatingKey = null
+    }
+
+    private fun dispatchKey(keyPos: Pair<Int, Int>) {
+        val (row, col) = keyPos
+        rows.getOrNull(row)?.getOrNull(col)?.let { key ->
+            onKeyListener?.invoke(key.keyCode, isShifted)
+        }
     }
 
     private fun findKeyAt(x: Float, y: Float): Pair<Int, Int>? {
@@ -207,6 +257,11 @@ class KeyboardView @JvmOverloads constructor(
                 rect
             }
         }
+    }
+
+    companion object {
+        private const val KEY_REPEAT_INITIAL_DELAY_MS = 350L
+        private const val KEY_REPEAT_INTERVAL_MS = 70L
     }
 
     private fun isSpecialKey(key: KeyDefinition): Boolean =

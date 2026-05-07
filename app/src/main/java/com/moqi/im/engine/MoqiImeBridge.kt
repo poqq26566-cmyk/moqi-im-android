@@ -6,6 +6,12 @@ import mobilebridge.MobileResponse
 import mobilebridge.Mobilebridge
 import mobilebridge.Session
 
+data class RimeSchemaEntry(
+    val id: String,
+    val name: String,
+    val selected: Boolean
+)
+
 data class MoqiImeResult(
     val success: Boolean,
     val handled: Boolean,
@@ -25,26 +31,35 @@ class MoqiImeSession(
 
     init {
         runCatching {
+            val totalStart = System.nanoTime()
             androidDataDir?.let {
+                val start = System.nanoTime()
                 Mobilebridge.setAndroidDataDir(it)
-                Log.i(TAG, "android data dir configured path=$it")
+                logDuration("setAndroidDataDir", start, "path=$it")
             }
+            val createStart = System.nanoTime()
             val created = Mobilebridge.newSession(guid)
+            logDuration("newSession", createStart, "guid=$guid")
             session = created
+            val initStart = System.nanoTime()
             val initResp = created.init()
+            logDuration("init", initStart, "guid=$guid success=${initResp?.success}")
             if (initResp?.success != true) {
                 initError = initResp?.error.orEmpty().ifBlank { "moqi-ime init failed" }
                 Log.e(TAG, "init failed guid=$guid error=$initError")
                 return@runCatching
             }
             Log.i(TAG, "init success guid=$guid")
+            val activateStart = System.nanoTime()
             val activateResp = created.activate()
+            logDuration("activate", activateStart, "guid=$guid success=${activateResp?.success} candidates=${activateResp?.candidateList?.len() ?: 0}")
             if (activateResp?.success != true) {
                 initError = activateResp?.error.orEmpty().ifBlank { "moqi-ime activate failed" }
                 Log.e(TAG, "activate failed guid=$guid error=$initError")
             } else {
                 Log.i(TAG, "activate success guid=$guid candidates=${activateResp.candidateList?.len() ?: 0}")
             }
+            logDuration("sessionReady", totalStart, "guid=$guid")
         }.onFailure { error ->
             initError = error.message.orEmpty().ifBlank { error::class.java.simpleName }
             Log.e(TAG, "session create failed guid=$guid", error)
@@ -55,7 +70,10 @@ class MoqiImeSession(
     fun keyDown(keyCode: Int, charCode: Int = 0): MoqiImeResult {
         val activeSession = session ?: return initErrorResult()
         return runCatching {
-            activeSession.keyDown(keyCode.toLong(), charCode.toLong()).toResult()
+            val start = System.nanoTime()
+            val result = activeSession.keyDown(keyCode.toLong(), charCode.toLong()).toResult()
+            logDuration("keyDown", start, "keyCode=$keyCode charCode=$charCode success=${result.success} handled=${result.handled} candidates=${result.candidates.size}")
+            result
         }.getOrElse { error ->
             Log.e(TAG, "keyDown failed keyCode=$keyCode charCode=$charCode", error)
             error.toResult()
@@ -65,7 +83,10 @@ class MoqiImeSession(
     fun selectCandidate(index: Int): MoqiImeResult {
         val activeSession = session ?: return initErrorResult()
         return runCatching {
-            activeSession.selectCandidate(index.toLong()).toResult()
+            val start = System.nanoTime()
+            val result = activeSession.selectCandidate(index.toLong()).toResult()
+            logDuration("selectCandidate", start, "index=$index success=${result.success} candidates=${result.candidates.size}")
+            result
         }.getOrElse { error ->
             Log.e(TAG, "selectCandidate failed index=$index", error)
             error.toResult()
@@ -75,9 +96,90 @@ class MoqiImeSession(
     fun command(commandId: Int): MoqiImeResult {
         val activeSession = session ?: return initErrorResult()
         return runCatching {
-            activeSession.command(commandId.toLong()).toResult()
+            val start = System.nanoTime()
+            val result = activeSession.command(commandId.toLong()).toResult()
+            logDuration("command", start, "commandId=$commandId success=${result.success} candidates=${result.candidates.size}")
+            result
         }.getOrElse { error ->
             Log.e(TAG, "command failed commandId=$commandId", error)
+            error.toResult()
+        }
+    }
+
+    fun schemeSets(): List<String> {
+        val activeSession = session ?: return emptyList()
+        return runCatching {
+            val start = System.nanoTime()
+            val values = activeSession.schemeSets().toKotlinList()
+            logDuration("schemeSets", start, "count=${values.size}")
+            values
+        }.getOrElse { error ->
+            Log.e(TAG, "schemeSets failed", error)
+            emptyList()
+        }
+    }
+
+    fun currentSchemeSet(): String {
+        val activeSession = session ?: return ""
+        return runCatching {
+            val start = System.nanoTime()
+            val value = activeSession.currentSchemeSet().orEmpty()
+            logDuration("currentSchemeSet", start, "value=$value")
+            value
+        }.getOrElse { error ->
+            Log.e(TAG, "currentSchemeSet failed", error)
+            ""
+        }
+    }
+
+    fun selectSchemeSet(name: String): MoqiImeResult {
+        val activeSession = session ?: return initErrorResult()
+        return runCatching {
+            val start = System.nanoTime()
+            val result = activeSession.selectSchemeSet(name).toResult()
+            logDuration("selectSchemeSet", start, "name=$name success=${result.success}")
+            result
+        }.getOrElse { error ->
+            Log.e(TAG, "selectSchemeSet failed name=$name", error)
+            error.toResult()
+        }
+    }
+
+    fun schemaEntries(): List<RimeSchemaEntry> {
+        val activeSession = session ?: return emptyList()
+        return runCatching {
+            val start = System.nanoTime()
+            val entries = activeSession.schemaEntries().toKotlinList().mapNotNull { it.toSchemaEntry() }
+            logDuration("schemaEntries", start, "count=${entries.size}")
+            entries
+        }.getOrElse { error ->
+            Log.e(TAG, "schemaEntries failed", error)
+            emptyList()
+        }
+    }
+
+    fun currentSchemaId(): String {
+        val activeSession = session ?: return ""
+        return runCatching {
+            val start = System.nanoTime()
+            val value = activeSession.currentSchemaID().orEmpty()
+            logDuration("currentSchemaID", start, "value=$value")
+            value
+        }.getOrElse { error ->
+            Log.e(TAG, "currentSchemaID failed", error)
+            ""
+        }
+    }
+
+    fun selectSchema(schemaId: String): MoqiImeResult {
+        val activeSession = session ?: return initErrorResult()
+        return runCatching {
+            val start = System.nanoTime()
+            val result = activeSession.selectSchema(schemaId).toResult()
+            logDuration("selectSchema", start, "schemaId=$schemaId success=${result.success}")
+            result
+        }.getOrElse { error ->
+            Log.e(TAG, "selectSchema failed schemaId=$schemaId", error)
             error.toResult()
         }
     }
@@ -109,6 +211,17 @@ class MoqiImeSession(
 
     companion object {
         private const val TAG = "MoqiImeSession"
+        private const val SLOW_LOG_THRESHOLD_MS = 30L
+
+        private fun logDuration(operation: String, startNanos: Long, details: String = "") {
+            val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
+            val message = "$operation took=${elapsedMs}ms $details"
+            if (elapsedMs >= SLOW_LOG_THRESHOLD_MS) {
+                Log.w(TAG, message)
+            } else {
+                Log.d(TAG, message)
+            }
+        }
     }
 }
 
@@ -198,6 +311,23 @@ private fun MobileResponse?.toResult(): MoqiImeResult {
         candidates = candidates,
         showCandidates = showCandidates,
         error = error.orEmpty()
+    )
+}
+
+private fun mobilebridge.StringList?.toKotlinList(): List<String> {
+    if (this == null) return emptyList()
+    return (0 until len()).map { index -> get(index) }
+}
+
+private fun String.toSchemaEntry(): RimeSchemaEntry? {
+    val parts = split('\t')
+    val id = parts.getOrNull(0).orEmpty()
+    if (id.isBlank()) return null
+    val name = parts.getOrNull(1).orEmpty().ifBlank { id }
+    return RimeSchemaEntry(
+        id = id,
+        name = name,
+        selected = parts.getOrNull(2) == "1"
     )
 }
 
