@@ -34,6 +34,36 @@ function Sync-RimeFrostData {
     foreach ($name in @(".git", ".github", ".gitignore", "README.md", "LICENSE", "others")) {
         Remove-Item -Recurse -Force (Join-Path $targetDir $name) -ErrorAction SilentlyContinue
     }
+
+    $version = Get-RimeEmbedVersion -TargetDir $targetDir
+    Set-Content -Path (Join-Path $targetDir ".moqi_embed_version") -Value $version -Encoding ASCII
+    Write-Host "Rime Frost embed version: $version"
+}
+
+function Get-RimeEmbedVersion {
+    param(
+        [string]$TargetDir
+    )
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $targetFull = ([System.IO.Path]::GetFullPath($TargetDir) -replace '[\\/]+$', '')
+        $builder = New-Object System.Text.StringBuilder
+        $files = @(Get-ChildItem -Path $TargetDir -Recurse -File | Sort-Object FullName)
+        foreach ($file in $files) {
+            if ($file.Name -eq ".moqi_embed_version") {
+                continue
+            }
+            $relative = ($file.FullName.Substring($targetFull.Length) -replace '^[\\/]+', '' -replace '\\', '/')
+            $fileHash = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash.ToLowerInvariant()
+            [void]($builder.Append($relative).Append("`t").Append($fileHash).Append("`n"))
+        }
+        $manifest = $builder.ToString()
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($manifest)
+        return [System.BitConverter]::ToString($sha.ComputeHash($bytes)).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 function Clear-RimeEmbedData {

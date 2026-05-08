@@ -8,8 +8,8 @@
     <application
         android:name=".MoqiApplication"
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:icon="@drawable/mo_icon"
+        android:roundIcon="@drawable/mo_icon"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.MoqiIM">
@@ -29,6 +29,13 @@
             android:name=".settings.SettingsActivity"
             android:exported="true"
             android:label="@string/settings_title"
+            android:theme="@style/Theme.MoqiIM" />
+
+        <activity
+            android:name=".settings.InputTestActivity"
+            android:exported="true"
+            android:label="@string/input_test_title"
+            android:windowSoftInputMode="stateAlwaysVisible|adjustResize"
             android:theme="@style/Theme.MoqiIM" />
 
         <service

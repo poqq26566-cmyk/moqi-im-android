@@ -7,5 +7,6 @@ data class KeyDefinition(
     val isRepeatable: Boolean = false,
     val isSticky: Boolean = false,
     val subLabel: String? = null,
-    val swipeText: String? = null
+    val swipeText: String? = null,
+    val commitText: String? = null
 )

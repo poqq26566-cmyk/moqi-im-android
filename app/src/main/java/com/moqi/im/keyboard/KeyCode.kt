@@ -16,6 +16,7 @@ object KeyCode {
     const val SYMBOL_LAYOUT = -112
     const val RETURN_TO_TEXT = -113
     const val TEXT_DOT_COM = -114
+    const val EMOJI_LAYOUT = -115
     const val T9_1 = -201
     const val T9_2 = -202
     const val T9_3 = -203
@@ -31,4 +32,15 @@ object KeyCode {
     const val SWITCH_TO_QWERTY = -301
     const val SWITCH_TO_T9 = -302
     const val EXIT_VOICE = -303
+    const val SYMBOL_COMMON = -401
+    const val SYMBOL_ENGLISH = -402
+    const val SYMBOL_CHINESE = -403
+    const val SYMBOL_WEB = -404
+    const val SYMBOL_PREV = -405
+    const val SYMBOL_NEXT = -406
+    const val T9_PINYIN_OPTION = -501
+    const val EMOJI_MODE = -601
+    const val KAOMOJI_MODE = -602
+    const val EMOJI_PREV = -603
+    const val EMOJI_NEXT = -604
 }

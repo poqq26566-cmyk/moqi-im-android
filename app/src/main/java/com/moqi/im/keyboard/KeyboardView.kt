@@ -6,9 +6,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
+import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
+import android.widget.OverScroller
 import com.moqi.im.R
 
 class KeyboardView @JvmOverloads constructor(
@@ -18,19 +22,26 @@ class KeyboardView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     enum class Layout {
-        QWERTY_CN, QWERTY_EN, T9_CN, T9_EN, NUMBER, SYMBOL, VOICE
+        QWERTY_CN, QWERTY_EN, T9_CN, T9_EN, NUMBER, SYMBOL, EMOJI, VOICE
     }
 
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val subLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val specialKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val sidePanelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var keyWidth: Float = 0f
     private var keyHeight: Float = 0f
     private var keyGap: Float = 0f
     private var currentLayout: Layout = Layout.QWERTY_CN
+    private var currentSymbolPage: SymbolPage = SymbolPage.COMMON
+    private var currentEmojiMode: EmojiMode = EmojiMode.EMOJI
+    private var currentEmojiCategoryIndex: Int = 0
+    private var t9PinyinOptions: List<String> = emptyList()
+    private var t9SidePanelRect = RectF()
+    private var t9SidePanelScrollOffset: Float = 0f
 
     private var rows: List<List<KeyDefinition>> = emptyList()
     private var keyRects: List<List<RectF>> = emptyList()
@@ -40,9 +51,14 @@ class KeyboardView @JvmOverloads constructor(
     private var touchStartKey: Pair<Int, Int>? = null
     private var touchStartX: Float = 0f
     private var touchStartY: Float = 0f
+    private var lastSidePanelY: Float = 0f
     private var swipeTriggered: Boolean = false
+    private var t9PinyinScrollTriggered: Boolean = false
     private var spaceLongPressRunnable: Runnable? = null
     private var spaceLongPressTriggered: Boolean = false
+    private val viewConfiguration = ViewConfiguration.get(context)
+    private val sidePanelScroller = OverScroller(context)
+    private var sidePanelVelocityTracker: VelocityTracker? = null
 
     private var shiftState: ShiftState = ShiftState.LOWER
     private var onKeyListener: ((Int, Boolean, String?) -> Unit)? = null
@@ -51,6 +67,19 @@ class KeyboardView @JvmOverloads constructor(
     enum class ShiftState {
         LOWER, TEMP_UPPER, LOCKED_UPPER
     }
+
+    private enum class SymbolPage {
+        COMMON, ENGLISH, CHINESE, WEB
+    }
+
+    private enum class EmojiMode {
+        EMOJI, KAOMOJI
+    }
+
+    private data class EmojiCategory(
+        val name: String,
+        val items: List<String>
+    )
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -69,6 +98,7 @@ class KeyboardView @JvmOverloads constructor(
             Layout.T9_EN -> t9EnRows()
             Layout.NUMBER -> numberRows()
             Layout.SYMBOL -> symbolRows()
+            Layout.EMOJI -> emojiRows()
             Layout.VOICE -> voiceRows()
         }
         requestLayout()
@@ -94,6 +124,28 @@ class KeyboardView @JvmOverloads constructor(
         onSpaceLongPressListener = listener
     }
 
+    fun isDirectCommitLayout(): Boolean =
+        currentLayout == Layout.NUMBER || currentLayout == Layout.SYMBOL || currentLayout == Layout.EMOJI
+
+    fun setT9PinyinOptions(options: List<String>) {
+        if (options != t9PinyinOptions) {
+            t9SidePanelScrollOffset = 0f
+            if (!sidePanelScroller.isFinished) {
+                sidePanelScroller.abortAnimation()
+            }
+        }
+        t9PinyinOptions = options
+        clampT9SidePanelScroll()
+        if (isT9Layout()) {
+            rows = when (currentLayout) {
+                Layout.T9_EN -> t9EnRows()
+                else -> t9CnRows()
+            }
+            requestLayout()
+            invalidate()
+        }
+    }
+
     fun showVoiceMode() {
         setLayout(Layout.VOICE)
     }
@@ -102,7 +154,7 @@ class KeyboardView @JvmOverloads constructor(
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val desiredHeight = MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 }
             ?: (resources.displayMetrics.heightPixels * 0.28f).toInt()
-        keyGap = (width * 0.006f).coerceAtLeast(4f * resources.displayMetrics.density)
+        keyGap = (width * 0.008f).coerceAtLeast(6f * resources.displayMetrics.density)
         val rowCount = rows.size.coerceAtLeast(1)
         keyHeight = (desiredHeight - keyGap * (rowCount + 1)) / rowCount
 
@@ -114,25 +166,74 @@ class KeyboardView @JvmOverloads constructor(
         super.onDraw(canvas)
         updatePaintColors()
 
+        drawT9SidePanel(canvas)
         for ((rowIdx, row) in keyRects.withIndex()) {
             for ((colIdx, rect) in row.withIndex()) {
+                if (isT9SidePanelCell(rowIdx, colIdx)) continue
                 val key = rows.getOrNull(rowIdx)?.getOrNull(colIdx) ?: continue
                 drawKey(canvas, rect, key, pressedKey == Pair(rowIdx, colIdx))
             }
         }
     }
 
+    private fun drawT9SidePanel(canvas: Canvas) {
+        if (!isT9Layout() || t9SidePanelRect.isEmpty) return
+        val dark = isDarkMode
+        val items = t9SideItems()
+        val cornerRadius = dp(8f)
+        keyPaint.color = if (dark) 0xFF2A2A42.toInt() else 0xFFFFFFFF.toInt()
+        canvas.drawRoundRect(t9SidePanelRect, cornerRadius, cornerRadius, keyPaint)
+
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        val baselineOffset = -(sidePanelTextPaint.descent() + sidePanelTextPaint.ascent()) / 2f
+        canvas.save()
+        canvas.clipRect(t9SidePanelRect)
+        items.forEachIndexed { index, key ->
+            val centerY = t9SidePanelRect.top + itemHeight * index + itemHeight / 2f - t9SidePanelScrollOffset
+            if (centerY + itemHeight / 2f < t9SidePanelRect.top || centerY - itemHeight / 2f > t9SidePanelRect.bottom) {
+                return@forEachIndexed
+            }
+            canvas.drawText(key.label, t9SidePanelRect.centerX(), centerY + baselineOffset, sidePanelTextPaint)
+        }
+        canvas.restore()
+        if (items.size > T9_VISIBLE_SIDE_ITEMS) {
+            val trackLeft = t9SidePanelRect.right - dp(4f)
+            val trackTop = t9SidePanelRect.top + dp(8f)
+            val trackBottom = t9SidePanelRect.bottom - dp(8f)
+            val maxScroll = maxT9SidePanelScroll().coerceAtLeast(1f)
+            val thumbHeight = ((trackBottom - trackTop) * t9SidePanelRect.height() / (items.size * itemHeight)).coerceAtLeast(dp(18f))
+            val thumbTop = trackTop + (trackBottom - trackTop - thumbHeight) * t9SidePanelScrollOffset / maxScroll
+            iconPaint.color = if (dark) 0xFF4A5158.toInt() else 0xFFD0D5DC.toInt()
+            canvas.drawRoundRect(
+                RectF(trackLeft, thumbTop, trackLeft + dp(2.5f), thumbTop + thumbHeight),
+                dp(2f),
+                dp(2f),
+                iconPaint
+            )
+        }
+    }
+
     private fun updatePaintColors() {
         val dark = isDarkMode
         labelPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
-        labelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(30f) else dp(23f)
+        labelPaint.textSize = when {
+            isT9Layout() -> sp(MAIN_LETTER_TEXT_SIZE_SP)
+            currentLayout == Layout.NUMBER -> dp(30f)
+            currentLayout == Layout.EMOJI && currentEmojiMode == EmojiMode.KAOMOJI -> sp(KAOMOJI_TEXT_SIZE_SP)
+            currentLayout == Layout.EMOJI -> sp(EMOJI_TEXT_SIZE_SP)
+            currentLayout == Layout.SYMBOL -> sp(SYMBOL_TEXT_SIZE_SP)
+            else -> sp(MAIN_LETTER_TEXT_SIZE_SP)
+        }
         labelPaint.textAlign = Paint.Align.CENTER
         subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-        subLabelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(13f) else dp(12f)
+        subLabelPaint.textSize = if (isNumberOrSymbolLayout() || currentLayout == Layout.EMOJI) dp(13f) else dp(12f)
         subLabelPaint.textAlign = Paint.Align.CENTER
         specialKeyPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         specialKeyPaint.textSize = dp(16f)
         specialKeyPaint.textAlign = Paint.Align.CENTER
+        sidePanelTextPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
+        sidePanelTextPaint.textSize = sp(T9_SIDE_PANEL_TEXT_SIZE_SP)
+        sidePanelTextPaint.textAlign = Paint.Align.CENTER
         iconPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         val bgColor = if (dark) 0xFF1A1A2E.toInt() else 0xFFF0F0F5.toInt()
         setBackgroundColor(bgColor)
@@ -168,21 +269,15 @@ class KeyboardView @JvmOverloads constructor(
 
         val textBaseline = if (key.swipeText.isNullOrBlank() || isSpecialKey(key)) {
             rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-        } else if (isT9Layout()) {
-            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f
         } else {
-            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f
+            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f - dp(1f)
         }
         canvas.drawText(text, rect.centerX(), textBaseline, textPaint)
 
-        val subLabel = key.subLabel ?: key.swipeText
+        val subLabel = key.subLabel
         if (subLabel != null && !isSpecialKey(key)) {
             subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-            val subBaseline = if (isT9Layout()) {
-                rect.top + dp(16f)
-            } else {
-                rect.bottom - dp(10f)
-            }
+            val subBaseline = rect.bottom - dp(7f)
             canvas.drawText(subLabel, rect.centerX(), subBaseline, subLabelPaint)
         }
     }
@@ -192,7 +287,7 @@ class KeyboardView @JvmOverloads constructor(
         val active = shiftState != ShiftState.LOWER
         val cx = rect.centerX()
         val cy = rect.centerY() - dp(1f)
-        val unit = rect.height().coerceAtMost(rect.width()) * 0.18f
+        val unit = rect.height().coerceAtMost(rect.width()) * 0.15f
         val path = Path().apply {
             moveTo(cx, cy - unit * 1.45f)
             lineTo(cx - unit * 1.55f, cy + unit * 0.2f)
@@ -204,11 +299,11 @@ class KeyboardView @JvmOverloads constructor(
             close()
         }
         iconPaint.style = if (active) Paint.Style.FILL else Paint.Style.STROKE
-        iconPaint.strokeWidth = dp(3f)
+        iconPaint.strokeWidth = dp(2.2f)
         canvas.drawPath(path, iconPaint)
         if (locked) {
             iconPaint.style = Paint.Style.STROKE
-            iconPaint.strokeWidth = dp(2.2f)
+            iconPaint.strokeWidth = dp(1.8f)
             val underlineY = rect.bottom - dp(13f)
             canvas.drawLine(cx - unit * 1.35f, underlineY, cx + unit * 1.35f, underlineY, iconPaint)
         }
@@ -219,21 +314,44 @@ class KeyboardView @JvmOverloads constructor(
         // Voice layout is now rendered as keys, not custom drawing
     }
 
+    override fun computeScroll() {
+        if (sidePanelScroller.computeScrollOffset()) {
+            t9SidePanelScrollOffset = sidePanelScroller.currY.toFloat().coerceIn(0f, maxT9SidePanelScroll())
+            postInvalidateOnAnimation()
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val sidePanelStarted = touchStartKey?.let { isT9SidePanelCell(it.first, it.second) } == true
+        if (sidePanelStarted) {
+            ensureSidePanelVelocityTracker().addMovement(event)
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (!sidePanelScroller.isFinished) {
+                    sidePanelScroller.abortAnimation()
+                }
                 val hit = findKeyAt(event.x, event.y)
                 touchStartKey = hit
                 touchStartX = event.x
                 touchStartY = event.y
+                lastSidePanelY = event.y
                 swipeTriggered = false
+                t9PinyinScrollTriggered = false
                 pressedKey = hit
+                if (hit?.let { isT9SidePanelCell(it.first, it.second) } == true) {
+                    ensureSidePanelVelocityTracker().addMovement(event)
+                }
                 startKeyRepeatIfNeeded(hit)
                 startSpaceLongPressIfNeeded(hit)
-                invalidate()
+                postInvalidateOnAnimation()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (handleT9PinyinOptionScroll(event.x, event.y)) {
+                    postInvalidateOnAnimation()
+                    return true
+                }
                 if (updateSwipeState(event.x, event.y)) {
                     invalidate()
                     return true
@@ -252,7 +370,9 @@ class KeyboardView @JvmOverloads constructor(
                 val repeatWasActive = repeatRunnable != null
                 val spaceLongPressWasActive = spaceLongPressTriggered
                 val startKey = touchStartKey
-                if (swipeTriggered && startKey != null) {
+                if (t9PinyinScrollTriggered) {
+                    // Option scrolling only changes the visible pinyin list; it must not select or input.
+                } else if (swipeTriggered && startKey != null) {
                     dispatchSwipeKey(startKey)
                 } else if (!spaceLongPressWasActive) {
                     pressedKey?.let { keyPos ->
@@ -262,19 +382,27 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
                 stopSpaceLongPress(endVoice = spaceLongPressWasActive)
+                if (t9PinyinScrollTriggered) {
+                    flingT9SidePanelIfNeeded()
+                }
+                recycleSidePanelVelocityTracker()
                 clearTouchTracking()
                 stopKeyRepeat()
                 pressedKey = null
-                invalidate()
+                postInvalidateOnAnimation()
                 performClick()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 stopSpaceLongPress(endVoice = spaceLongPressTriggered)
+                if (!sidePanelScroller.isFinished) {
+                    sidePanelScroller.abortAnimation()
+                }
+                recycleSidePanelVelocityTracker()
                 clearTouchTracking()
                 stopKeyRepeat()
                 pressedKey = null
-                invalidate()
+                postInvalidateOnAnimation()
                 return true
             }
         }
@@ -307,11 +435,77 @@ class KeyboardView @JvmOverloads constructor(
         return false
     }
 
+    private fun handleT9PinyinOptionScroll(x: Float, y: Float): Boolean {
+        val items = t9SideItems()
+        if (items.size <= T9_VISIBLE_SIDE_ITEMS) return false
+        val startKey = touchStartKey ?: return false
+        if (!isT9SidePanelCell(startKey.first, startKey.second)) return false
+        val dx = x - touchStartX
+        val dy = y - touchStartY
+        if (kotlin.math.abs(dy) < 1f || kotlin.math.abs(dy) < kotlin.math.abs(dx)) {
+            return false
+        }
+        val nextOffset = (t9SidePanelScrollOffset + lastSidePanelY - y).coerceIn(0f, maxT9SidePanelScroll())
+        lastSidePanelY = y
+        t9SidePanelScrollOffset = nextOffset
+        t9PinyinScrollTriggered = true
+        pressedKey = startKey
+        stopKeyRepeat()
+        stopSpaceLongPress(endVoice = spaceLongPressTriggered)
+        return true
+    }
+
+    private fun ensureSidePanelVelocityTracker(): VelocityTracker {
+        val tracker = sidePanelVelocityTracker ?: VelocityTracker.obtain().also {
+            sidePanelVelocityTracker = it
+        }
+        return tracker
+    }
+
+    private fun recycleSidePanelVelocityTracker() {
+        sidePanelVelocityTracker?.recycle()
+        sidePanelVelocityTracker = null
+    }
+
+    private fun flingT9SidePanelIfNeeded() {
+        val maxScroll = maxT9SidePanelScroll().toInt()
+        if (maxScroll <= 0) return
+        val tracker = sidePanelVelocityTracker ?: return
+        tracker.computeCurrentVelocity(1000, viewConfiguration.scaledMaximumFlingVelocity.toFloat())
+        val velocityY = -tracker.yVelocity.toInt()
+        if (kotlin.math.abs(velocityY) < viewConfiguration.scaledMinimumFlingVelocity) return
+        sidePanelScroller.fling(
+            0,
+            t9SidePanelScrollOffset.toInt(),
+            0,
+            velocityY,
+            0,
+            0,
+            0,
+            maxScroll
+        )
+        postInvalidateOnAnimation()
+    }
+
+    private fun clampT9SidePanelScroll() {
+        t9SidePanelScrollOffset = t9SidePanelScrollOffset.coerceIn(0f, maxT9SidePanelScroll())
+    }
+
+    private fun maxT9SidePanelScroll(): Float {
+        if (t9SidePanelRect.isEmpty) return 0f
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        return (t9SideItems().size * itemHeight - t9SidePanelRect.height()).coerceAtLeast(0f)
+    }
+
+    private fun isT9SidePanelCell(row: Int, col: Int): Boolean = isT9Layout() && col == 0 && row in 0..2
+
     private fun clearTouchTracking() {
         touchStartKey = null
         touchStartX = 0f
         touchStartY = 0f
+        lastSidePanelY = 0f
         swipeTriggered = false
+        t9PinyinScrollTriggered = false
     }
 
     private fun swipeThresholdPx(): Float {
@@ -366,8 +560,21 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun dispatchKey(keyPos: Pair<Int, Int>) {
+        if (isT9SidePanelCell(keyPos.first, keyPos.second)) {
+            t9SideItemAt(touchStartY)?.let { key ->
+                onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, key.commitText)
+            }
+            return
+        }
         val key = keyAt(keyPos) ?: return
-        onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, null)
+        if (handleSymbolCategoryKey(key.keyCode)) return
+        if (handleEmojiCategoryKey(key.keyCode)) return
+        val directText = if (isDirectCommitLayout() && !isSpecialKey(key) && key.keyCode >= 0) {
+            key.commitText ?: key.label
+        } else {
+            key.commitText
+        }
+        onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, directText)
     }
 
     private fun dispatchSwipeKey(keyPos: Pair<Int, Int>) {
@@ -405,6 +612,16 @@ class KeyboardView @JvmOverloads constructor(
                 rect
             }
         }
+        t9SidePanelRect = if (isT9Layout() && keyRects.size >= 3 && keyRects[0].isNotEmpty()) {
+            RectF(
+                keyRects[0][0].left,
+                keyRects[0][0].top,
+                keyRects[0][0].right,
+                keyRects[2][0].bottom
+            )
+        } else {
+            RectF()
+        }
     }
 
     companion object {
@@ -412,6 +629,12 @@ class KeyboardView @JvmOverloads constructor(
         private const val KEY_REPEAT_INTERVAL_MS = 70L
         private const val SPACE_LONG_PRESS_DELAY_MS = 280L
         private const val SWIPE_INPUT_THRESHOLD_DP = 36f
+        private const val MAIN_LETTER_TEXT_SIZE_SP = 21f
+        private const val SYMBOL_TEXT_SIZE_SP = 23f
+        private const val EMOJI_TEXT_SIZE_SP = 25f
+        private const val KAOMOJI_TEXT_SIZE_SP = 13f
+        private const val T9_SIDE_PANEL_TEXT_SIZE_SP = 14f
+        private const val T9_VISIBLE_SIDE_ITEMS = 4
     }
 
     private fun isSpecialKey(key: KeyDefinition): Boolean =
@@ -432,83 +655,155 @@ class KeyboardView @JvmOverloads constructor(
     private fun isT9PunctuationKey(keyCode: Int): Boolean =
         isT9Layout() && (keyCode == KeyCode.COMMA || keyCode == KeyCode.PERIOD)
 
+    private fun handleSymbolCategoryKey(keyCode: Int): Boolean {
+        val page = when (keyCode) {
+            KeyCode.SYMBOL_COMMON -> SymbolPage.COMMON
+            KeyCode.SYMBOL_ENGLISH -> SymbolPage.ENGLISH
+            KeyCode.SYMBOL_CHINESE -> SymbolPage.CHINESE
+            KeyCode.SYMBOL_WEB -> SymbolPage.WEB
+            KeyCode.SYMBOL_PREV -> previousSymbolPage()
+            KeyCode.SYMBOL_NEXT -> nextSymbolPage()
+            else -> return false
+        }
+        currentSymbolPage = page
+        rows = symbolRows()
+        requestLayout()
+        invalidate()
+        return true
+    }
+
+    private fun handleEmojiCategoryKey(keyCode: Int): Boolean {
+        when (keyCode) {
+            KeyCode.EMOJI_MODE -> currentEmojiMode = EmojiMode.EMOJI
+            KeyCode.KAOMOJI_MODE -> currentEmojiMode = EmojiMode.KAOMOJI
+            KeyCode.EMOJI_PREV -> {
+                val size = currentEmojiCategories().size
+                currentEmojiCategoryIndex = (currentEmojiCategoryIndex - 1 + size) % size
+            }
+            KeyCode.EMOJI_NEXT -> {
+                val size = currentEmojiCategories().size
+                currentEmojiCategoryIndex = (currentEmojiCategoryIndex + 1) % size
+            }
+            else -> return false
+        }
+        currentEmojiCategoryIndex = currentEmojiCategoryIndex.coerceIn(0, currentEmojiCategories().lastIndex)
+        rows = emojiRows()
+        requestLayout()
+        invalidate()
+        return true
+    }
+
+    private fun previousSymbolPage(): SymbolPage {
+        val pages = SymbolPage.values()
+        val index = pages.indexOf(currentSymbolPage)
+        return pages[(index - 1 + pages.size) % pages.size]
+    }
+
+    private fun nextSymbolPage(): SymbolPage {
+        val pages = SymbolPage.values()
+        val index = pages.indexOf(currentSymbolPage)
+        return pages[(index + 1) % pages.size]
+    }
+
     private fun qwertyCnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
-        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“", "”", "*", "?")),
-        rowOfWithExtras("zxcvbnm", listOf("(", ")", "-", "_", ":", ";", "/")),
+        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“”", "（）", "*", "_")),
+        rowOfWithExtras("zxcvbnm", listOf("`", "+", "-", "?", "：", "；", "/")),
         bottomRowCn()
     )
 
     private fun qwertyEnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
-        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“", "”", "*", "?")),
-        rowOfWithExtras("zxcvbnm", listOf("(", ")", "-", "_", ":", ";", "/")),
+        rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "\"\"", "()", "*", "_")),
+        rowOfWithExtras("zxcvbnm", listOf("`", "+", "-", "?", ":", ";", "/")),
         bottomRowEn()
     )
 
     private fun t9CnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
-            KeyDefinition("，", KeyCode.COMMA, 0.72f),
-            KeyDefinition("1", KeyCode.T9_1, 1f),
-            KeyDefinition("ABC", KeyCode.T9_2, 1f, subLabel = "2"),
-            KeyDefinition("DEF", KeyCode.T9_3, 1f, subLabel = "3"),
+            t9SideKey(0, "，", KeyCode.COMMA),
+            t9Key("1", KeyCode.T9_1, "1"),
+            t9Key("ABC", KeyCode.T9_2, "2"),
+            t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
         ),
         listOf(
-            KeyDefinition("。", KeyCode.PERIOD, 0.72f),
-            KeyDefinition("GHI", KeyCode.T9_4, 1f, subLabel = "4"),
-            KeyDefinition("JKL", KeyCode.T9_5, 1f, subLabel = "5"),
-            KeyDefinition("MNO", KeyCode.T9_6, 1f, subLabel = "6"),
+            t9SideKey(1, "。", KeyCode.PERIOD),
+            t9Key("GHI", KeyCode.T9_4, "4"),
+            t9Key("JKL", KeyCode.T9_5, "5"),
+            t9Key("MNO", KeyCode.T9_6, "6"),
             KeyDefinition("重输", KeyCode.RETYPE, 0.72f)
         ),
         listOf(
-            KeyDefinition("?", '?'.code, 0.72f),
-            KeyDefinition("PQRS", KeyCode.T9_7, 1f, subLabel = "7"),
-            KeyDefinition("TUV", KeyCode.T9_8, 1f, subLabel = "8"),
-            KeyDefinition("WXYZ", KeyCode.T9_9, 1f, subLabel = "9"),
-            KeyDefinition("0", KeyCode.T9_0, 0.72f)
+            t9SideKey(2, "?", '?'.code),
+            t9Key("PQRS", KeyCode.T9_7, "7"),
+            t9Key("TUV", KeyCode.T9_8, "8"),
+            t9Key("WXYZ", KeyCode.T9_9, "9"),
+            t9Key("0", KeyCode.T9_0, "0", 0.72f)
         ),
         listOf(
-            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
-            KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
-            KeyDefinition("空格 🎤", KeyCode.SPACE, 1.5f),
             KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.66f),
-            KeyDefinition("...", KeyCode.MENU, 0.66f),
+            KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
+            KeyDefinition("空格 🎤", KeyCode.SPACE, 2.16f),
+            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
             KeyDefinition("↵", KeyCode.ENTER, 0.66f)
         )
     )
 
     private fun t9EnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
-            KeyDefinition(",", KeyCode.COMMA, 0.72f),
-            KeyDefinition("1", KeyCode.T9_1, 1f),
-            KeyDefinition("ABC", KeyCode.T9_2, 1f, subLabel = "2"),
-            KeyDefinition("DEF", KeyCode.T9_3, 1f, subLabel = "3"),
+            t9SideKey(0, ",", KeyCode.COMMA),
+            t9Key("1", KeyCode.T9_1, "1"),
+            t9Key("ABC", KeyCode.T9_2, "2"),
+            t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
         ),
         listOf(
-            KeyDefinition(".", KeyCode.PERIOD, 0.72f),
-            KeyDefinition("GHI", KeyCode.T9_4, 1f, subLabel = "4"),
-            KeyDefinition("JKL", KeyCode.T9_5, 1f, subLabel = "5"),
-            KeyDefinition("MNO", KeyCode.T9_6, 1f, subLabel = "6"),
+            t9SideKey(1, ".", KeyCode.PERIOD),
+            t9Key("GHI", KeyCode.T9_4, "4"),
+            t9Key("JKL", KeyCode.T9_5, "5"),
+            t9Key("MNO", KeyCode.T9_6, "6"),
             KeyDefinition("Redo", KeyCode.RETYPE, 0.72f)
         ),
         listOf(
-            KeyDefinition("?", '?'.code, 0.72f),
-            KeyDefinition("PQRS", KeyCode.T9_7, 1f, subLabel = "7"),
-            KeyDefinition("TUV", KeyCode.T9_8, 1f, subLabel = "8"),
-            KeyDefinition("WXYZ", KeyCode.T9_9, 1f, subLabel = "9"),
-            KeyDefinition("0", KeyCode.T9_0, 0.72f)
+            t9SideKey(2, "?", '?'.code),
+            t9Key("PQRS", KeyCode.T9_7, "7"),
+            t9Key("TUV", KeyCode.T9_8, "8"),
+            t9Key("WXYZ", KeyCode.T9_9, "9"),
+            t9Key("0", KeyCode.T9_0, "0", 0.72f)
         ),
         listOf(
-            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
-            KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
-            KeyDefinition("Space 🎤", KeyCode.SPACE, 1.5f),
             KeyDefinition("En/中", KeyCode.MODE_SWITCH, 0.66f),
-            KeyDefinition("...", KeyCode.MENU, 0.66f),
+            KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
+            KeyDefinition("Space 🎤", KeyCode.SPACE, 2.16f),
+            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
             KeyDefinition("↵", KeyCode.ENTER, 0.66f)
         )
     )
+
+    private fun t9Key(label: String, keyCode: Int, digit: String, widthFactor: Float = 1f): KeyDefinition =
+        KeyDefinition(label, keyCode, widthFactor, subLabel = digit.takeUnless { it == label }, swipeText = digit)
+
+    private fun t9SideKey(index: Int, fallbackLabel: String, fallbackKeyCode: Int): KeyDefinition =
+        t9SideItems().getOrNull(index) ?: KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
+
+    private fun t9SideItems(): List<KeyDefinition> {
+        if (t9PinyinOptions.isNotEmpty()) {
+            return t9PinyinOptions.map { option ->
+                KeyDefinition(option, KeyCode.T9_PINYIN_OPTION, 0.72f, commitText = option)
+            }
+        }
+        return listOf("，", "。", "？", "：", "！", "…", "；", "、", ".", "-", "@").map { symbol ->
+            KeyDefinition(symbol, symbol.singleOrNull()?.code ?: symbol.first().code, 0.72f, commitText = symbol)
+        }
+    }
+
+    private fun t9SideItemAt(y: Float): KeyDefinition? {
+        if (!isT9Layout() || !t9SidePanelRect.contains(t9SidePanelRect.centerX(), y)) return null
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        val index = ((y - t9SidePanelRect.top + t9SidePanelScrollOffset) / itemHeight).toInt()
+        return t9SideItems().getOrNull(index)
+    }
 
     private fun numberRows(): List<List<KeyDefinition>> = listOf(
         listOf(
@@ -541,42 +836,124 @@ class KeyboardView @JvmOverloads constructor(
         )
     )
 
-    private fun symbolRows(): List<List<KeyDefinition>> = listOf(
-        listOf(
-            KeyDefinition("常用", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition("-", '-'.code, 1f),
-            KeyDefinition("，", ','.code, 1f),
-            KeyDefinition("。", '.'.code, 1f),
-            KeyDefinition("?", '?'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("英文", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition("!", '!'.code, 1f),
-            KeyDefinition("✓", '✓'.code, 1f),
-            KeyDefinition("×", '×'.code, 1f),
-            KeyDefinition("@", '@'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("中文", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition(".", '.'.code, 1f),
-            KeyDefinition("~", '~'.code, 1f),
-            KeyDefinition("#", '#'.code, 1f),
-            KeyDefinition("_", '_'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("网络", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition("'", '\''.code, 1f),
-            KeyDefinition(".com", KeyCode.TEXT_DOT_COM, 1f),
-            KeyDefinition(":", ':'.code, 1f),
-            KeyDefinition("*", '*'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("返回", KeyCode.RETURN_TO_TEXT, 1f),
-            KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
-            KeyDefinition("⌃", KeyCode.SYMBOL_LAYOUT, 1f),
-            KeyDefinition("⌄", KeyCode.SYMBOL_LAYOUT, 1f),
-            KeyDefinition("⌫", KeyCode.DELETE, 1f, isRepeatable = true)
+    private fun symbolRows(): List<List<KeyDefinition>> {
+        val symbols = when (currentSymbolPage) {
+            SymbolPage.COMMON -> listOf(
+                listOf("-", "，", "。", "?"),
+                listOf("!", "✓", "×", "@"),
+                listOf(".", "~", "#", "_"),
+                listOf("'", ".com", ":", "*")
+            )
+            SymbolPage.ENGLISH -> listOf(
+                listOf(",", ".", "?", "!"),
+                listOf(";", ":", "'", "\""),
+                listOf("-", "_", "(", ")"),
+                listOf("@", "#", "$", "&")
+            )
+            SymbolPage.CHINESE -> listOf(
+                listOf("，", "。", "？", "！"),
+                listOf("；", "：", "、", "……"),
+                listOf("“”", "（）", "《", "》"),
+                listOf("【", "】", "￥", "·")
+            )
+            SymbolPage.WEB -> listOf(
+                listOf(".com", "www.", "https://", "/"),
+                listOf("@", ".", "_", "-"),
+                listOf(":", "#", "?", "="),
+                listOf("&", "%", "+", "*")
+            )
+        }
+        return listOf(
+            symbolCategoryRow("常用", KeyCode.SYMBOL_COMMON, SymbolPage.COMMON, symbols[0]),
+            symbolCategoryRow("英文", KeyCode.SYMBOL_ENGLISH, SymbolPage.ENGLISH, symbols[1]),
+            symbolCategoryRow("中文", KeyCode.SYMBOL_CHINESE, SymbolPage.CHINESE, symbols[2]),
+            symbolCategoryRow("网络", KeyCode.SYMBOL_WEB, SymbolPage.WEB, symbols[3]),
+            listOf(
+                KeyDefinition("返回", KeyCode.RETURN_TO_TEXT, 1f),
+                KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
+                KeyDefinition("⌃", KeyCode.SYMBOL_PREV, 1f),
+                KeyDefinition("⌄", KeyCode.SYMBOL_NEXT, 1f),
+                KeyDefinition("⌫", KeyCode.DELETE, 1f, isRepeatable = true)
+            )
         )
+    }
+
+    private fun symbolCategoryRow(
+        label: String,
+        keyCode: Int,
+        page: SymbolPage,
+        symbols: List<String>
+    ): List<KeyDefinition> = listOf(
+        KeyDefinition(label, keyCode, 0.72f, isSticky = currentSymbolPage == page),
+        *symbols.map { symbolKey(it) }.toTypedArray()
+    )
+
+    private fun symbolKey(label: String): KeyDefinition {
+        val keyCode = when (label) {
+            ".com" -> KeyCode.TEXT_DOT_COM
+            else -> label.singleOrNull()?.code ?: label.first().code
+        }
+        return KeyDefinition(label, keyCode, 1f, commitText = label)
+    }
+
+    private fun emojiRows(): List<List<KeyDefinition>> {
+        val category = currentEmojiCategories()[currentEmojiCategoryIndex.coerceIn(0, currentEmojiCategories().lastIndex)]
+        val itemRows = category.items.take(15).chunked(5).map { row ->
+            row.map { emojiKey(it) }
+        }
+        return listOf(
+            listOf(
+                KeyDefinition("Emoji", KeyCode.EMOJI_MODE, 1f, isSticky = currentEmojiMode == EmojiMode.EMOJI),
+                KeyDefinition("颜文字", KeyCode.KAOMOJI_MODE, 1f, isSticky = currentEmojiMode == EmojiMode.KAOMOJI),
+                KeyDefinition("‹", KeyCode.EMOJI_PREV, 0.72f),
+                KeyDefinition(category.name, KeyCode.EMOJI_NEXT, 1.36f, isSticky = true),
+                KeyDefinition("›", KeyCode.EMOJI_NEXT, 0.72f)
+            ),
+            itemRows.getOrElse(0) { emptyList() },
+            itemRows.getOrElse(1) { emptyList() },
+            itemRows.getOrElse(2) { emptyList() },
+            listOf(
+                KeyDefinition("返回", KeyCode.RETURN_TO_TEXT, 1f),
+                KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
+                KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
+                KeyDefinition("⌫", KeyCode.DELETE, 1f, isRepeatable = true)
+            )
+        )
+    }
+
+    private fun emojiKey(label: String): KeyDefinition =
+        KeyDefinition(label, label.first().code, 1f, commitText = label)
+
+    private fun currentEmojiCategories(): List<EmojiCategory> =
+        if (currentEmojiMode == EmojiMode.KAOMOJI) kaomojiCategories else emojiCategories
+
+    private val emojiCategories: List<EmojiCategory> = listOf(
+        EmojiCategory("黄脸", listOf("😀", "😂", "😃", "😄", "😁", "😆", "😅", "🤣", "😊", "🙂", "🙃", "😉", "😍", "😘", "😋")),
+        EmojiCategory("组合", listOf("🫶", "🫰", "🙏", "💪", "👏", "👍", "🎉", "✨", "🔥", "💯", "❤️‍🔥", "🌈", "⭐", "🌟", "💫")),
+        EmojiCategory("人物", listOf("👶", "👧", "🧒", "👦", "👩", "🧑", "👨", "👵", "🧓", "👴", "👮", "👷", "💂", "🕵️", "🧙")),
+        EmojiCategory("手势", listOf("👍", "👎", "👌", "🤌", "🤏", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "👇", "🙏")),
+        EmojiCategory("动物", listOf("🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵")),
+        EmojiCategory("植物", listOf("🌵", "🎄", "🌲", "🌳", "🌴", "🌱", "🌿", "☘️", "🍀", "🎍", "🪴", "🍃", "🍂", "🍁", "🌾")),
+        EmojiCategory("食物", listOf("🍎", "🍊", "🍌", "🍉", "🍇", "🍓", "🍒", "🥝", "🍅", "🥑", "🍞", "🍔", "🍟", "🍕", "🍜")),
+        EmojiCategory("心形", listOf("❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️", "💕", "💞", "💓", "💗")),
+        EmojiCategory("节日", listOf("🎉", "🎊", "🎈", "🎁", "🎂", "🧧", "🏮", "🎄", "🎅", "🤶", "🧑‍🎄", "🎃", "🧨", "✨", "🎇")),
+        EmojiCategory("运动", listOf("⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🏐", "🏉", "🥏", "🎱", "🏓", "🏸", "🥅", "🏒", "🏑")),
+        EmojiCategory("交通", listOf("🚗", "🚕", "🚙", "🚌", "🚎", "🏎️", "🚓", "🚑", "🚒", "🚚", "🚲", "🛵", "🏍️", "🚄", "✈️")),
+        EmojiCategory("元素", listOf("☀️", "🌙", "⭐", "⚡", "🔥", "💧", "🌊", "❄️", "☁️", "🌧️", "🌈", "🌪️", "🌍", "🌋", "🪐")),
+        EmojiCategory("标志", listOf("✅", "☑️", "✔️", "❌", "⭕", "❗", "❓", "⚠️", "🚫", "♻️", "🔰", "🔱", "⚜️", "🔆", "🔅")),
+        EmojiCategory("物品", listOf("⌚", "📱", "💻", "⌨️", "🖱️", "📷", "🎧", "🎤", "📦", "💡", "🔦", "🔑", "✂️", "🧰", "🪄")),
+        EmojiCategory("国旗", listOf("🇨🇳", "🇭🇰", "🇲🇴", "🇹🇼", "🇯🇵", "🇰🇷", "🇺🇸", "🇬🇧", "🇫🇷", "🇩🇪", "🇮🇹", "🇪🇸", "🇷🇺", "🇨🇦", "🇦🇺"))
+    )
+
+    private val kaomojiCategories: List<EmojiCategory> = listOf(
+        EmojiCategory("开心", listOf("ヽ(✿ﾟ▽ﾟ)ノ", "o(*￣▽￣*)o", "(p≧w≦q)", "╰(*°▽°*)╯", "(*^▽^*)", "o(￣▽￣)ｄ", "♪(^∇^*)", "ヾ(≧▽≦*)o", "o(*≧▽≦)ツ", "(＾－＾)V", "^O^", "q(≧▽≦q)", "~(￣▽￣)~*", "(๑•̀ㅂ•́)و✧", "(✿◡‿◡)")),
+        EmojiCategory("喜欢", listOf("(≧∇≦)ﾉ", "(´▽`ʃ♡ƪ)", "（づ￣3￣）づ╭❤～", "(* ￣3)(ε￣ *)", "(　ﾟ∀ﾟ) ﾉ♡", "Σ>―(〃°ω°〃)♡→", "(づ￣ ³￣)づ", "(u‿ฺu✿ฺ)", "(*/ω＼*)", "\\(//?//)\\", "(〃'▽'〃)", "(๑❛ᴗ❛๑)", "(◡ᴗ◡✿)", "(︶.̮︶✽)", "(｡･ω･｡)ﾉ♡")),
+        EmojiCategory("哭泣", listOf("(ノへ￣、)", "┭┮﹏┭┮", "(´；ω；`)", "ヽ(；▽；)ノ", "(┳＿┳)...", "╥﹏╥...", "┗( T﹏T )┛", "(；′⌒`)", "ε(┬┬﹏┬┬)3", "o(TヘTo)", "(T_T)", "QAQ", "TAT", "ಥ_ಥ", "(。﹏。*)")),
+        EmojiCategory("生气", listOf("(ー`´ー)", "o(￣ヘ￣o＃)", "(#`O′)", "凸(艹皿艹 )", "(╬￣皿￣)＝○", "╭∩╮(︶︿︶）╭∩╮", "o(一︿一+)o", "(╯‵□′)╯︵┻━┻", "┻━┻︵╰(‵□′)╯︵┻━┻", "(╬▔皿▔)╯", "(# ﾟДﾟ)", "(； ･`д･´)", "(눈益눈)", "ヽ(#`Д´)ﾉ", "٩(๑`^´๑)۶")),
+        EmojiCategory("惊讶", listOf("w(ﾟДﾟ)w", "Σ( ° △ °|||)︴", "(⊙﹏⊙)", "(＠_＠;)", "(°ー°〃)", "Σ(⊙▽⊙\"a", "(￣△￣；)", "(⊙_⊙)?", "Σ(っ °Д °;)っ", "━━(￣ー￣*|||━━", "(◎_x)", "o(°▽、°o)", "┌(。Д。)┐", "X﹏X", "(ﾟДﾟ*)ﾉ")),
+        EmojiCategory("无奈", listOf("╮(￣▽￣\")╭", "┑(￣Д ￣)┍", "ㄟ( ▔, ▔ )ㄏ", "¯\\_(ツ)_/¯", "(ーー゛)", "(￣_,￣ )", "~~( ﹁ ﹁ ) ~~~", "( ﹁ ﹁ ) ~→", "(ー_ー)!!", "(′゜c_，゜` )", "( ￣ー￣)", "(＠￣ー￣＠)", "┌( ´_ゝ` )┐", "(☆-ｖ-)", "(´ｰ∀ｰ`)")),
+        EmojiCategory("动作", listOf("ヾ(￣▽￣)Bye~Bye~", "Hi~ o(*￣▽￣*)ブ", "o(*≧▽≦)ツ┏━┓", "(～￣▽￣)→", "▄︻┻┳═一……", "(╯‵□′)╯炸弹！•••*～●", "↑↑↓↓←→←→ＢＡ", "ヽ(゜▽゜　)－C", "z(-_-z)).....((s-_-)s", "_〆(´Д｀ )", "○|￣|_", "(ง •̀_•́)ง", "╭( ･ㅂ･)و ̑̑", "ｍ(＿　＿)ｍ", "(*°▽°*)八(*°▽°*)♪")),
+        EmojiCategory("动物", listOf("o( =•ω•= )m", "≡ω≡", "（ΦωΦ）", "(*￣(エ)￣)", "(=ﾟωﾟ)=", "(ﾟωﾟ)", "(oﾟωﾟo)", "(*´ω`*)", "( ^ω^)", "(・ω・)", "(｀･ω･)", "(`・ω・´)", "(´・ω・`)", "ヾ(´ωﾟ｀)", "（<ゝω・）☆"))
     )
 
     private fun rowOf(chars: String, swipeChars: String? = null): List<KeyDefinition> {
@@ -618,21 +995,21 @@ class KeyboardView @JvmOverloads constructor(
     )
 
     private fun bottomRowCn(): List<KeyDefinition> = listOf(
-        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.5f),
+        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.2f),
         KeyDefinition("，", KeyCode.COMMA, 1f),
-        KeyDefinition("空格 🎤", KeyCode.SPACE, 6f),
+        KeyDefinition("空格 🎤", KeyCode.SPACE, 6.5f),
         KeyDefinition("。", KeyCode.PERIOD, 1f),
-        KeyDefinition("...", KeyCode.MENU, 1f),
-        KeyDefinition("↵", KeyCode.ENTER, 1.5f)
+        KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
+        KeyDefinition("↵", KeyCode.ENTER, 1.3f)
     )
 
     private fun bottomRowEn(): List<KeyDefinition> = listOf(
-        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.5f),
+        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.2f),
         KeyDefinition(",", KeyCode.COMMA, 1f),
-        KeyDefinition("Space 🎤", KeyCode.SPACE, 6f),
+        KeyDefinition("Space 🎤", KeyCode.SPACE, 6.5f),
         KeyDefinition(".", KeyCode.PERIOD, 1f),
-        KeyDefinition("...", KeyCode.MENU, 1f),
-        KeyDefinition("↵", KeyCode.ENTER, 1.5f)
+        KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
+        KeyDefinition("↵", KeyCode.ENTER, 1.3f)
     )
 
     private fun charToKeyCode(ch: Char): Int = when (ch) {
@@ -643,11 +1020,17 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
+    private fun sp(value: Float): Float = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        value,
+        resources.displayMetrics
+    )
+
     private fun voiceRows(): List<List<KeyDefinition>> = listOf(
         listOf(
             KeyDefinition("返回键盘", KeyCode.EXIT_VOICE, 4f),
             KeyDefinition("中/英", KeyCode.MODE_SWITCH, 4f),
-            KeyDefinition("...", KeyCode.MENU, 4f)
+            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 4f)
         ),
         listOf(
             KeyDefinition("长按空格语音", KeyCode.EXIT_VOICE, 4f),

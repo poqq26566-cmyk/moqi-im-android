@@ -22,8 +22,15 @@ data class RimeMenuEntry(
 
 data class CandidateEntry(
     val text: String,
-    val comment: String
+    val comment: String,
+    val source: CandidateEntrySource = CandidateEntrySource.RIME,
+    val commitText: String = text
 )
+
+enum class CandidateEntrySource {
+    RIME,
+    CLIPBOARD
+}
 
 data class MoqiImeResult(
     val success: Boolean,
@@ -33,6 +40,7 @@ data class MoqiImeResult(
     val candidates: List<String>,
     val candidateEntries: List<CandidateEntry>,
     val showCandidates: Boolean,
+    val message: String,
     val error: String
 )
 
@@ -246,6 +254,7 @@ class MoqiImeSession(
             candidates = emptyList(),
             candidateEntries = emptyList(),
             showCandidates = false,
+            message = "",
             error = initError.ifBlank { "moqi-ime session is not initialized" }
         )
     }
@@ -334,6 +343,7 @@ private fun MobileResponse?.toResult(): MoqiImeResult {
             candidates = emptyList(),
             candidateEntries = emptyList(),
             showCandidates = false,
+            message = "",
             error = "empty moqi-ime response"
         )
     }
@@ -352,6 +362,7 @@ private fun MobileResponse?.toResult(): MoqiImeResult {
         candidates = candidates,
         candidateEntries = displayEntries,
         showCandidates = showCandidates,
+        message = message.orEmpty(),
         error = error.orEmpty()
     )
 }
@@ -406,6 +417,7 @@ private fun Throwable.toResult(): MoqiImeResult {
         candidates = emptyList(),
         candidateEntries = emptyList(),
         showCandidates = false,
+        message = "",
         error = message.orEmpty().ifBlank { javaClass.simpleName }
     )
 }

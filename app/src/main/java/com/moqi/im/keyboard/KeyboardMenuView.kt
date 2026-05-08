@@ -10,7 +10,7 @@ import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
-import android.widget.GridLayout
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -21,7 +21,7 @@ class KeyboardMenuView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
-) : ScrollView(context, attrs, defStyleAttr) {
+) : FrameLayout(context, attrs, defStyleAttr) {
 
     data class MenuState(
         val menuEntries: List<RimeMenuEntry> = emptyList(),
@@ -45,9 +45,16 @@ class KeyboardMenuView @JvmOverloads constructor(
     var callback: Callback? = null
 
     private val density = resources.displayMetrics.density
+    private val mainLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+    }
+    private val scrollView = ScrollView(context).apply {
+        isFillViewport = true
+    }
+    private var expandedSelectionList: View? = null
     private val content = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
-        setPadding(dp(14), dp(10), dp(14), dp(16))
+        setPadding(dp(10), dp(6), dp(10), dp(10))
     }
     private val downloadUrl = EditText(context).apply {
         hint = "方案集 ZIP URL"
@@ -66,22 +73,16 @@ class KeyboardMenuView @JvmOverloads constructor(
 
     init {
         setBackgroundColor(Color.rgb(240, 240, 245))
-        addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        mainLayout.addView(createHeader(), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48)))
+        scrollView.addView(content, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        mainLayout.addView(scrollView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        addView(mainLayout, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         render(MenuState())
     }
 
     fun render(state: MenuState) {
+        dismissSelectionList()
         content.removeAllViews()
-        addHeader()
-        addSection("常用")
-        addGrid(
-            listOf(
-                Action("输入法设置") { callback?.onOpenSettings() },
-                Action("切换输入法") { callback?.onInputMethodPicker() },
-                Action("长按空格语音") { callback?.onBack() },
-                Action("键盘") { callback?.onBack() }
-            )
-        )
 
         val commandItems = state.menuEntries.filter { it.commandId != 0 && it.text.isNotBlank() }
         val statusItems = commandItems.filter { it.group.isBlank() }.take(12)
@@ -94,21 +95,36 @@ class KeyboardMenuView @JvmOverloads constructor(
 
         if (state.schemeSets.isNotEmpty()) {
             addSection("方案集")
-            addGrid(state.schemeSets.map { name ->
-                Action(if (name == state.currentSchemeSet) "✓ $name" else name) {
-                    callback?.onSchemeSet(name)
+            addSelector(
+                label = state.currentSchemeSet.ifBlank { state.schemeSets.first() },
+                items = state.schemeSets.map { name ->
+                    SelectionItem(
+                        label = name,
+                        selected = name == state.currentSchemeSet
+                    ) {
+                        callback?.onSchemeSet(name)
+                    }
                 }
-            }, columns = 2, itemHeight = 72)
+            )
         }
 
         if (state.schemas.isNotEmpty()) {
             addSection("输入方案")
-            addGrid(state.schemas.map { schema ->
-                val selected = schema.id == state.currentSchemaId || schema.selected
-                Action(if (selected) "✓ ${schema.name}" else schema.name) {
-                    callback?.onSchema(schema.id)
+            val currentSchema = state.schemas.firstOrNull {
+                it.id == state.currentSchemaId || it.selected
+            } ?: state.schemas.first()
+            addSelector(
+                label = currentSchema.name.ifBlank { currentSchema.id },
+                items = state.schemas.map { schema ->
+                    val selected = schema.id == state.currentSchemaId || schema.selected
+                    SelectionItem(
+                        label = schema.name.ifBlank { schema.id },
+                        selected = selected
+                    ) {
+                        callback?.onSchema(schema.id)
+                    }
                 }
-            }, columns = 2, itemHeight = 84)
+            )
         }
 
         val configItems = commandItems.filter {
@@ -124,46 +140,117 @@ class KeyboardMenuView @JvmOverloads constructor(
         addDownloadSection()
     }
 
-    private fun addHeader() {
-        val row = LinearLayout(context).apply {
+    private fun createHeader(): View {
+        return LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(2))
+            addView(menuButton("←") { callback?.onBack() }, LinearLayout.LayoutParams(dp(50), dp(40)))
+            addView(TextView(context).apply {
+                text = "墨奇菜单"
+                textSize = 17f
+                setTextColor(Color.rgb(26, 26, 46))
+                gravity = Gravity.CENTER_VERTICAL
+            }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            addView(menuButton("设置") { callback?.onOpenSettings() }, LinearLayout.LayoutParams(dp(68), dp(40)))
         }
-        row.addView(menuButton("←") { callback?.onBack() }, LinearLayout.LayoutParams(dp(54), dp(44)))
-        row.addView(TextView(context).apply {
-            text = "墨奇菜单"
-            textSize = 18f
-            setTextColor(Color.rgb(26, 26, 46))
-            gravity = Gravity.CENTER_VERTICAL
-        }, LinearLayout.LayoutParams(0, dp(44), 1f))
-        row.addView(menuButton("设置") { callback?.onOpenSettings() }, LinearLayout.LayoutParams(dp(72), dp(44)))
-        content.addView(row)
     }
 
     private fun addSection(title: String) {
         content.addView(TextView(context).apply {
             text = title
-            textSize = 15f
+            textSize = 14f
             setTextColor(Color.rgb(96, 96, 128))
-            setPadding(0, dp(12), 0, dp(6))
+            setPadding(0, dp(8), 0, dp(3))
         })
     }
 
-    private fun addGrid(actions: List<Action>, columns: Int = 4, itemHeight: Int = 64) {
-        val grid = GridLayout(context).apply {
-            columnCount = columns
-            useDefaultMargins = true
-        }
-        actions.forEach { action ->
-            val lp = GridLayout.LayoutParams().apply {
-                width = 0
-                height = dp(itemHeight)
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                setMargins(dp(4), dp(4), dp(4), dp(4))
+    private fun addGrid(actions: List<Action>, columns: Int = 4, itemHeight: Int = 56) {
+        actions.chunked(columns).forEach { rowActions ->
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
             }
-            grid.addView(menuButton(action.label, action.onClick), lp)
+            rowActions.forEach { action ->
+                val lp = LinearLayout.LayoutParams(0, dp(itemHeight), 1f).apply {
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
+                }
+                row.addView(menuButton(action.label, action.onClick), lp)
+            }
+            repeat(columns - rowActions.size) {
+                row.addView(View(context), LinearLayout.LayoutParams(0, dp(itemHeight), 1f))
+            }
+            content.addView(row, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         }
-        content.addView(grid, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun addSelector(label: String, items: List<SelectionItem>) {
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val button = menuButton("$label  ▾") {}
+        val list = createSelectionList(items).apply {
+            visibility = GONE
+        }
+        button.setOnClickListener {
+            if (list.visibility == VISIBLE) {
+                dismissSelectionList()
+            } else {
+                dismissSelectionList()
+                list.visibility = VISIBLE
+                expandedSelectionList = list
+            }
+        }
+        container.addView(button, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(48)).apply {
+            setMargins(dp(3), dp(3), dp(3), dp(6))
+        })
+        container.addView(list, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(3), 0, dp(3), dp(6))
+        })
+        content.addView(container, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+
+    private fun createSelectionList(items: List<SelectionItem>): View {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(246, 246, 250))
+            items.forEach { item ->
+                addView(selectionRow(item), LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(52)))
+            }
+        }
+    }
+
+    private fun dismissSelectionList() {
+        expandedSelectionList?.visibility = GONE
+        expandedSelectionList = null
+    }
+
+    override fun onDetachedFromWindow() {
+        dismissSelectionList()
+        super.onDetachedFromWindow()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (visibility != VISIBLE) {
+            dismissSelectionList()
+        }
+    }
+
+    private fun selectionRow(item: SelectionItem): TextView {
+        return TextView(context).apply {
+            text = if (item.selected) "✓ ${item.label}" else item.label
+            textSize = 16f
+            setTextColor(Color.rgb(26, 26, 46))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), 0, dp(18), 0)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setOnClickListener {
+                dismissSelectionList()
+                item.onClick.onClick(it)
+            }
+        }
     }
 
     private fun addDownloadSection() {
@@ -193,6 +280,12 @@ class KeyboardMenuView @JvmOverloads constructor(
             text = textValue
             textSize = 14f
             isAllCaps = false
+            minWidth = 0
+            minHeight = 0
+            minimumWidth = 0
+            minimumHeight = 0
+            gravity = Gravity.CENTER
+            setPadding(dp(4), 0, dp(4), 0)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
             setOnClickListener(onClick)
@@ -208,6 +301,12 @@ class KeyboardMenuView @JvmOverloads constructor(
 
     private data class Action(
         val label: String,
+        val onClick: View.OnClickListener
+    )
+
+    private data class SelectionItem(
+        val label: String,
+        val selected: Boolean,
         val onClick: View.OnClickListener
     )
 }
