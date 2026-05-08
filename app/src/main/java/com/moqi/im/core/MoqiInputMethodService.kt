@@ -29,6 +29,7 @@ import com.moqi.im.engine.InputMode
 import com.moqi.im.engine.MoqiImeEngineRunner
 import com.moqi.im.engine.MoqiImeKeyMapper
 import com.moqi.im.engine.MoqiImeResult
+import com.moqi.im.engine.RimeSchemaEntry
 import com.moqi.im.engine.SherpaVoiceEngine
 import com.moqi.im.keyboard.CandidateView
 import com.moqi.im.keyboard.ComposeView
@@ -1097,6 +1098,33 @@ class MoqiInputMethodService : InputMethodService() {
         }
         keyboardView?.setLayout(layout)
         updateShiftKeyState()
+        refreshCandidateStatusBanner()
+    }
+
+    /**
+     * 候选条空态「墨奇输入法」后的文案：与设置里「输入方案」summary 相同（当前方案 id 对应的 name，如「白霜小鹤双拼」）。
+     * 仅用 [RimeSchemaEntry.id] 精确匹配，避免误用其它条目的 [RimeSchemaEntry.selected]。
+     */
+    private fun refreshCandidateStatusBanner() {
+        val cv = candidateView ?: return
+        if (!::engineRunner.isInitialized) {
+            cv.setImeStatusDetail("")
+            return
+        }
+        engineRunner.menuState { _, _, _, schemas, schemaId ->
+            val view = candidateView ?: return@menuState
+            val sid = currentSchemaId.ifBlank { schemaId }
+            view.setImeStatusDetail(rimeSchemaDisplayNameLikeSettings(schemas, sid))
+        }
+    }
+
+    /** 与 [com.moqi.im.settings.SettingsFragment.updateSchemaPreference] 中 summary 一致。 */
+    private fun rimeSchemaDisplayNameLikeSettings(schemas: List<RimeSchemaEntry>, currentSchemaId: String): String {
+        if (schemas.isEmpty()) return currentSchemaId
+        val value = currentSchemaId.ifBlank {
+            schemas.firstOrNull { it.selected }?.id ?: schemas.first().id
+        }
+        return schemas.firstOrNull { it.id == value }?.name?.takeIf { it.isNotBlank() } ?: value
     }
 
     private fun updateShiftKeyState() {

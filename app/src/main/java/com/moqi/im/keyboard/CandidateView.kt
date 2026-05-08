@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.text.TextPaint
+import android.text.TextUtils
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.MotionEvent
@@ -76,6 +78,16 @@ class CandidateView @JvmOverloads constructor(
     private var onEmojiClick: (() -> Unit)? = null
     private var onKeyboardDismiss: (() -> Unit)? = null
     private var onClipboardDismiss: (() -> Unit)? = null
+
+    /** 候选条为空时，显示在「墨奇输入法」后的说明（与设置里输入方案名称一致，如「白霜小鹤双拼」）。 */
+    private var imeStatusDetail: String = ""
+
+    fun setImeStatusDetail(detail: String) {
+        val next = detail.trim()
+        if (imeStatusDetail == next) return
+        imeStatusDetail = next
+        invalidate()
+    }
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -265,7 +277,16 @@ class CandidateView @JvmOverloads constructor(
             commentPaint.color = if (isDarkMode) 0xFF858C94.toInt() else 0xFF8A929C.toInt()
             commentPaint.textAlign = Paint.Align.CENTER
             val baseline = height / 2f - (commentPaint.descent() + commentPaint.ascent()) / 2f
-            canvas.drawText("墨奇输入法", (emojiButtonRect.right + moreButtonRect.left) / 2f, baseline, commentPaint)
+            val centerX = (emojiButtonRect.right + moreButtonRect.left) / 2f
+            val fullText = if (imeStatusDetail.isBlank()) {
+                "墨奇"
+            } else {
+                "墨奇 · $imeStatusDetail"
+            }
+            val textPaint = TextPaint(commentPaint)
+            val maxWidth = (moreButtonRect.left - emojiButtonRect.right - dp(12f)).coerceAtLeast(dp(48f))
+            val displayed = TextUtils.ellipsize(fullText, textPaint, maxWidth, TextUtils.TruncateAt.END)
+            canvas.drawText(displayed, 0, displayed.length, centerX, baseline, commentPaint)
             if (moreButtonPressed) {
                 canvas.drawRoundRect(moreButtonRect, dp(6f), dp(6f), highlightPaint)
             }
