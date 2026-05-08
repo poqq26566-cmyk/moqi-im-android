@@ -43,7 +43,11 @@ object T9Pinyin {
 
     fun optionsFor(digits: String, limit: Int = 20): List<String> {
         if (digits.isBlank()) return emptyList()
-        return pinyinByDigits[digits].orEmpty().take(limit)
+        val options = mutableListOf<String>()
+        for (length in digits.length downTo 1) {
+            options += pinyinByDigits[digits.take(length)].orEmpty()
+        }
+        return options.distinct().take(limit)
     }
 
     fun segmentDigits(digits: String): List<String> {

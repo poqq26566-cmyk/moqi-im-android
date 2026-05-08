@@ -35,6 +35,7 @@ class KeyboardView @JvmOverloads constructor(
     private var currentSymbolPage: SymbolPage = SymbolPage.COMMON
     private var t9PinyinOptions: List<String> = emptyList()
     private var t9PinyinOptionOffset: Int = 0
+    private var t9SidePanelRect = RectF()
 
     private var rows: List<List<KeyDefinition>> = emptyList()
     private var keyRects: List<List<RectF>> = emptyList()
@@ -44,7 +45,10 @@ class KeyboardView @JvmOverloads constructor(
     private var touchStartKey: Pair<Int, Int>? = null
     private var touchStartX: Float = 0f
     private var touchStartY: Float = 0f
+    private var lastSidePanelY: Float = 0f
+    private var sidePanelScrollRemainder: Float = 0f
     private var swipeTriggered: Boolean = false
+    private var t9PinyinScrollTriggered: Boolean = false
     private var spaceLongPressRunnable: Runnable? = null
     private var spaceLongPressTriggered: Boolean = false
 
@@ -109,7 +113,7 @@ class KeyboardView @JvmOverloads constructor(
         t9PinyinOptions = options
         t9PinyinOptionOffset = t9PinyinOptionOffset.coerceIn(
             0,
-            maxOf(0, options.size - T9_VISIBLE_PINYIN_OPTIONS)
+            maxOf(0, t9SideItems().size - T9_VISIBLE_SIDE_ITEMS)
         )
         if (isT9Layout()) {
             rows = when (currentLayout) {
@@ -141,11 +145,45 @@ class KeyboardView @JvmOverloads constructor(
         super.onDraw(canvas)
         updatePaintColors()
 
+        drawT9SidePanel(canvas)
         for ((rowIdx, row) in keyRects.withIndex()) {
             for ((colIdx, rect) in row.withIndex()) {
+                if (isT9SidePanelCell(rowIdx, colIdx)) continue
                 val key = rows.getOrNull(rowIdx)?.getOrNull(colIdx) ?: continue
                 drawKey(canvas, rect, key, pressedKey == Pair(rowIdx, colIdx))
             }
+        }
+    }
+
+    private fun drawT9SidePanel(canvas: Canvas) {
+        if (!isT9Layout() || t9SidePanelRect.isEmpty) return
+        val dark = isDarkMode
+        val items = t9SideItems()
+        val visibleItems = items.drop(t9PinyinOptionOffset).take(T9_VISIBLE_SIDE_ITEMS)
+        val cornerRadius = dp(8f)
+        keyPaint.color = if (dark) 0xFF2A2A42.toInt() else 0xFFFFFFFF.toInt()
+        canvas.drawRoundRect(t9SidePanelRect, cornerRadius, cornerRadius, keyPaint)
+
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        val baselineOffset = -(labelPaint.descent() + labelPaint.ascent()) / 2f
+        visibleItems.forEachIndexed { index, key ->
+            val centerY = t9SidePanelRect.top + itemHeight * index + itemHeight / 2f
+            canvas.drawText(key.label, t9SidePanelRect.centerX(), centerY + baselineOffset, labelPaint)
+        }
+        if (items.size > T9_VISIBLE_SIDE_ITEMS) {
+            val trackLeft = t9SidePanelRect.right - dp(4f)
+            val trackTop = t9SidePanelRect.top + dp(8f)
+            val trackBottom = t9SidePanelRect.bottom - dp(8f)
+            val maxOffset = (items.size - T9_VISIBLE_SIDE_ITEMS).coerceAtLeast(1)
+            val thumbHeight = ((trackBottom - trackTop) * T9_VISIBLE_SIDE_ITEMS / items.size).coerceAtLeast(dp(18f))
+            val thumbTop = trackTop + (trackBottom - trackTop - thumbHeight) * t9PinyinOptionOffset / maxOffset
+            iconPaint.color = if (dark) 0xFF4A5158.toInt() else 0xFFD0D5DC.toInt()
+            canvas.drawRoundRect(
+                RectF(trackLeft, thumbTop, trackLeft + dp(2.5f), thumbTop + thumbHeight),
+                dp(2f),
+                dp(2f),
+                iconPaint
+            )
         }
     }
 
@@ -252,7 +290,10 @@ class KeyboardView @JvmOverloads constructor(
                 touchStartKey = hit
                 touchStartX = event.x
                 touchStartY = event.y
+                lastSidePanelY = event.y
+                sidePanelScrollRemainder = 0f
                 swipeTriggered = false
+                t9PinyinScrollTriggered = false
                 pressedKey = hit
                 startKeyRepeatIfNeeded(hit)
                 startSpaceLongPressIfNeeded(hit)
@@ -282,7 +323,9 @@ class KeyboardView @JvmOverloads constructor(
                 val repeatWasActive = repeatRunnable != null
                 val spaceLongPressWasActive = spaceLongPressTriggered
                 val startKey = touchStartKey
-                if (swipeTriggered && startKey != null) {
+                if (t9PinyinScrollTriggered) {
+                    // Option scrolling only changes the visible pinyin list; it must not select or input.
+                } else if (swipeTriggered && startKey != null) {
                     dispatchSwipeKey(startKey)
                 } else if (!spaceLongPressWasActive) {
                     pressedKey?.let { keyPos ->
@@ -338,39 +381,51 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun handleT9PinyinOptionScroll(x: Float, y: Float): Boolean {
-        if (swipeTriggered || t9PinyinOptions.size <= T9_VISIBLE_PINYIN_OPTIONS) return false
+        val items = t9SideItems()
+        if (items.size <= T9_VISIBLE_SIDE_ITEMS) return false
         val startKey = touchStartKey ?: return false
-        val key = keyAt(startKey) ?: return false
-        if (key.keyCode != KeyCode.T9_PINYIN_OPTION) return false
+        if (!isT9SidePanelCell(startKey.first, startKey.second)) return false
         val dx = x - touchStartX
         val dy = y - touchStartY
         if (kotlin.math.abs(dy) <= swipeThresholdPx() || kotlin.math.abs(dy) <= kotlin.math.abs(dx)) {
             return false
         }
-        val newOffset = (t9PinyinOptionOffset + if (dy > 0f) 1 else -1).coerceIn(
-            0,
-            (t9PinyinOptions.size - T9_VISIBLE_PINYIN_OPTIONS).coerceAtLeast(0)
-        )
-        if (newOffset != t9PinyinOptionOffset) {
-            t9PinyinOptionOffset = newOffset
-            rows = when (currentLayout) {
-                Layout.T9_EN -> t9EnRows()
-                else -> t9CnRows()
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        sidePanelScrollRemainder += lastSidePanelY - y
+        lastSidePanelY = y
+        val steps = (sidePanelScrollRemainder / itemHeight).toInt()
+        if (steps != 0) {
+            val newOffset = (t9PinyinOptionOffset + steps).coerceIn(
+                0,
+                (items.size - T9_VISIBLE_SIDE_ITEMS).coerceAtLeast(0)
+            )
+            sidePanelScrollRemainder -= steps * itemHeight
+            if (newOffset != t9PinyinOptionOffset) {
+                t9PinyinOptionOffset = newOffset
+                rows = when (currentLayout) {
+                    Layout.T9_EN -> t9EnRows()
+                    else -> t9CnRows()
+                }
+                requestLayout()
             }
-            requestLayout()
         }
-        swipeTriggered = true
+        t9PinyinScrollTriggered = true
         pressedKey = startKey
         stopKeyRepeat()
         stopSpaceLongPress(endVoice = spaceLongPressTriggered)
         return true
     }
 
+    private fun isT9SidePanelCell(row: Int, col: Int): Boolean = isT9Layout() && col == 0 && row in 0..2
+
     private fun clearTouchTracking() {
         touchStartKey = null
         touchStartX = 0f
         touchStartY = 0f
+        lastSidePanelY = 0f
+        sidePanelScrollRemainder = 0f
         swipeTriggered = false
+        t9PinyinScrollTriggered = false
     }
 
     private fun swipeThresholdPx(): Float {
@@ -425,6 +480,12 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun dispatchKey(keyPos: Pair<Int, Int>) {
+        if (isT9SidePanelCell(keyPos.first, keyPos.second)) {
+            t9SideItemAt(touchStartY)?.let { key ->
+                onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, key.commitText)
+            }
+            return
+        }
         val key = keyAt(keyPos) ?: return
         if (handleSymbolCategoryKey(key.keyCode)) return
         val directText = if (isDirectCommitLayout() && !isSpecialKey(key) && key.keyCode >= 0) {
@@ -470,6 +531,16 @@ class KeyboardView @JvmOverloads constructor(
                 rect
             }
         }
+        t9SidePanelRect = if (isT9Layout() && keyRects.size >= 3 && keyRects[0].isNotEmpty()) {
+            RectF(
+                keyRects[0][0].left,
+                keyRects[0][0].top,
+                keyRects[0][0].right,
+                keyRects[2][0].bottom
+            )
+        } else {
+            RectF()
+        }
     }
 
     companion object {
@@ -479,7 +550,7 @@ class KeyboardView @JvmOverloads constructor(
         private const val SWIPE_INPUT_THRESHOLD_DP = 36f
         private const val MAIN_LETTER_TEXT_SIZE_SP = 21f
         private const val SYMBOL_TEXT_SIZE_SP = 23f
-        private const val T9_VISIBLE_PINYIN_OPTIONS = 3
+        private const val T9_VISIBLE_SIDE_ITEMS = 4
     }
 
     private fun isSpecialKey(key: KeyDefinition): Boolean =
@@ -610,13 +681,25 @@ class KeyboardView @JvmOverloads constructor(
     private fun t9Key(label: String, keyCode: Int, digit: String, widthFactor: Float = 1f): KeyDefinition =
         KeyDefinition(label, keyCode, widthFactor, subLabel = digit.takeUnless { it == label }, swipeText = digit)
 
-    private fun t9SideKey(index: Int, fallbackLabel: String, fallbackKeyCode: Int): KeyDefinition {
-        val option = t9PinyinOptions.getOrNull(t9PinyinOptionOffset + index)
-        return if (option == null) {
-            KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
-        } else {
-            KeyDefinition(option, KeyCode.T9_PINYIN_OPTION, 0.72f, commitText = option)
+    private fun t9SideKey(index: Int, fallbackLabel: String, fallbackKeyCode: Int): KeyDefinition =
+        t9SideItems().getOrNull(t9PinyinOptionOffset + index) ?: KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
+
+    private fun t9SideItems(): List<KeyDefinition> {
+        if (t9PinyinOptions.isNotEmpty()) {
+            return t9PinyinOptions.map { option ->
+                KeyDefinition(option, KeyCode.T9_PINYIN_OPTION, 0.72f, commitText = option)
+            }
         }
+        return listOf("，", "。", "？", "：", "！", "…", "；", "、", ".", "-", "@").map { symbol ->
+            KeyDefinition(symbol, symbol.singleOrNull()?.code ?: symbol.first().code, 0.72f, commitText = symbol)
+        }
+    }
+
+    private fun t9SideItemAt(y: Float): KeyDefinition? {
+        if (!isT9Layout() || !t9SidePanelRect.contains(t9SidePanelRect.centerX(), y)) return null
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        val index = ((y - t9SidePanelRect.top) / itemHeight).toInt()
+        return t9SideItems().getOrNull(t9PinyinOptionOffset + index)
     }
 
     private fun numberRows(): List<List<KeyDefinition>> = listOf(
