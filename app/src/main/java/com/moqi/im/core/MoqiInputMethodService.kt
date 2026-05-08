@@ -849,21 +849,33 @@ class MoqiInputMethodService : InputMethodService() {
     private fun setCandidateExpanded(expanded: Boolean) {
         val view = candidateView ?: return
         val targetHeight = if (expanded) {
-            dp(168)
+            inputPanelView?.height?.takeIf { it > 0 } ?: dp(260)
         } else {
             resources.getDimensionPixelSize(com.moqi.im.R.dimen.candidate_height)
         }
         val params = view.layoutParams
-        if (params.height == targetHeight) return
-        params.height = targetHeight
-        view.layoutParams = params
+        if (params.height != targetHeight) {
+            params.height = targetHeight
+            view.layoutParams = params
+        }
+        if (keyboardMenuView?.visibility != View.VISIBLE) {
+            keyboardView?.visibility = if (expanded) View.GONE else View.VISIBLE
+            if (!expanded) {
+                updateKeyboard()
+            }
+        }
+        if (expanded) {
+            view.bringToFront()
+        }
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun showMenuPanel() {
+        setCandidateExpanded(false)
         keyboardView?.visibility = View.GONE
         keyboardMenuView?.visibility = View.VISIBLE
+        keyboardMenuView?.bringToFront()
         refreshMenuPanel()
     }
 

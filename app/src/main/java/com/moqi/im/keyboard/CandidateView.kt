@@ -44,7 +44,9 @@ class CandidateView @JvmOverloads constructor(
     private var scrollOffset = 0f
     private var maxScrollOffset = 0f
     private var downX = 0f
+    private var downY = 0f
     private var lastX = 0f
+    private var lastY = 0f
     private var isDragging = false
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
@@ -108,12 +110,15 @@ class CandidateView @JvmOverloads constructor(
 
         canvas.save()
         canvas.clipRect(0f, 0f, moreButtonRect.left, height.toFloat())
-        if (!expanded) {
+        if (expanded) {
+            canvas.translate(0f, -scrollOffset)
+        } else {
             canvas.translate(-scrollOffset, 0f)
         }
         for ((i, rect) in itemRects.withIndex()) {
             if (i >= candidates.size) break
             if (!expanded && (rect.right < scrollOffset || rect.left > scrollOffset + moreButtonRect.left)) continue
+            if (expanded && (rect.bottom < scrollOffset || rect.top > scrollOffset + height)) continue
 
             val candidate = candidates[i]
             val isSelected = i == pressedIndex
@@ -161,7 +166,10 @@ class CandidateView @JvmOverloads constructor(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
-        val h = resources.getDimension(R.dimen.candidate_height)
+        val h = MeasureSpec.getSize(heightMeasureSpec)
+            .takeIf { it > 0 }
+            ?.toFloat()
+            ?: resources.getDimension(R.dimen.candidate_height)
         calculateItemRects(width, h)
         setMeasuredDimension(width, h.toInt())
     }
@@ -170,11 +178,13 @@ class CandidateView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
+                downY = event.y
                 lastX = event.x
+                lastY = event.y
                 isDragging = false
                 pressedControl = findControlAt(event.x, event.y)
                 moreButtonPressed = (pressedControl >= 0 || moreButtonRect.contains(event.x, event.y)) && candidates.isNotEmpty()
-                pressedIndex = if (moreButtonPressed) -1 else findItemAt(touchContentX(event.x), event.y)
+                pressedIndex = if (moreButtonPressed) -1 else findItemAt(touchContentX(event.x), touchContentY(event.y))
                 invalidate()
                 return true
             }
@@ -188,6 +198,16 @@ class CandidateView @JvmOverloads constructor(
                     return true
                 }
                 if (expanded) {
+                    val dy = lastY - event.y
+                    if (!isDragging && abs(event.y - downY) > touchSlop) {
+                        isDragging = true
+                        pressedIndex = -1
+                    }
+                    if (isDragging) {
+                        scrollOffset = (scrollOffset + dy).coerceIn(0f, maxScrollOffset)
+                        invalidate()
+                    }
+                    lastY = event.y
                     return true
                 }
                 val dx = lastX - event.x
@@ -219,7 +239,7 @@ class CandidateView @JvmOverloads constructor(
                     invalidate()
                     return true
                 }
-                val idx = findItemAt(touchContentX(event.x), event.y)
+                val idx = findItemAt(touchContentX(event.x), touchContentY(event.y))
                 if (!isDragging && idx in candidates.indices && idx == pressedIndex) {
                     onCandidateIndexSelected?.invoke(idx)
                     onCandidateSelected?.invoke(candidates[idx].text)
@@ -258,8 +278,10 @@ class CandidateView @JvmOverloads constructor(
                 val top = padding + row * rowHeight
                 RectF(left, top, left + itemWidth, top + rowHeight)
             }
-            maxScrollOffset = 0f
-            scrollOffset = 0f
+            val rowCount = ((candidates.size + columns - 1) / columns).coerceAtLeast(1)
+            val contentHeight = padding * 2 + rowCount * rowHeight
+            maxScrollOffset = (contentHeight - totalHeight).coerceAtLeast(0f)
+            scrollOffset = scrollOffset.coerceIn(0f, maxScrollOffset)
         } else {
             var x = padding
             itemRects = candidates.map { candidate ->
@@ -332,8 +354,7 @@ class CandidateView @JvmOverloads constructor(
 
     private fun findItemAt(x: Float, y: Float): Int {
         itemRects.forEachIndexed { i, rect ->
-            val hitY = if (expanded) y else rect.centerY()
-            if (rect.contains(x, hitY)) return i
+            if (rect.contains(x, y)) return i
         }
         return -1
     }
@@ -347,6 +368,8 @@ class CandidateView @JvmOverloads constructor(
     }
 
     private fun touchContentX(x: Float): Float = if (expanded) x else x + scrollOffset
+
+    private fun touchContentY(y: Float): Float = if (expanded) y + scrollOffset else y
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
 
