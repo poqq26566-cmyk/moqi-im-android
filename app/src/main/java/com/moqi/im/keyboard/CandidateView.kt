@@ -34,6 +34,8 @@ class CandidateView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
     private var candidates: List<CandidateEntry> = emptyList()
+    private var currentPageCandidates: List<CandidateEntry> = emptyList()
+    private val expandedCandidates = mutableListOf<ExpandedCandidate>()
     private var itemRects: List<RectF> = emptyList()
     private var controlRects: List<RectF> = emptyList()
     private var moreButtonRect = RectF()
@@ -43,6 +45,7 @@ class CandidateView @JvmOverloads constructor(
     private var expanded = false
     private var scrollOffset = 0f
     private var maxScrollOffset = 0f
+    private var pageChangeRequested = false
     private var downX = 0f
     private var downY = 0f
     private var lastX = 0f
@@ -52,8 +55,10 @@ class CandidateView @JvmOverloads constructor(
 
     private var onCandidateSelected: ((String) -> Unit)? = null
     private var onCandidateIndexSelected: ((Int) -> Unit)? = null
+    private var onExpandedCandidateIndexSelected: ((Int, Int) -> Unit)? = null
     private var onExpandedChanged: ((Boolean) -> Unit)? = null
     private var onCandidatePageChange: ((Boolean) -> Unit)? = null
+    private var onExpandedLoadNextPage: (() -> Unit)? = null
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -68,10 +73,13 @@ class CandidateView @JvmOverloads constructor(
     }
 
     fun setCandidateEntries(candidates: List<CandidateEntry>) {
+        currentPageCandidates = candidates
         this.candidates = candidates
+        expandedCandidates.clear()
         pressedIndex = -1
         pressedControl = -1
         moreButtonPressed = false
+        pageChangeRequested = false
         scrollOffset = 0f
         if (candidates.isEmpty()) {
             expanded = false
@@ -91,12 +99,38 @@ class CandidateView @JvmOverloads constructor(
         onCandidateIndexSelected = listener
     }
 
+    fun setOnExpandedCandidateIndexSelectedListener(listener: (Int, Int) -> Unit) {
+        onExpandedCandidateIndexSelected = listener
+    }
+
     fun setOnExpandedChangedListener(listener: (Boolean) -> Unit) {
         onExpandedChanged = listener
     }
 
     fun setOnCandidatePageChangeListener(listener: (Boolean) -> Unit) {
         onCandidatePageChange = listener
+    }
+
+    fun setOnExpandedLoadNextPageListener(listener: () -> Unit) {
+        onExpandedLoadNextPage = listener
+    }
+
+    fun appendExpandedCandidateEntries(pageIndex: Int, entries: List<CandidateEntry>) {
+        if (!expanded || entries.isEmpty()) {
+            pageChangeRequested = false
+            return
+        }
+        if (expandedCandidates.any { it.pageIndex == pageIndex }) {
+            pageChangeRequested = false
+            return
+        }
+        expandedCandidates += entries.mapIndexed { index, entry ->
+            ExpandedCandidate(entry, pageIndex, index)
+        }
+        candidates = expandedCandidates.map { it.entry }
+        pageChangeRequested = false
+        requestLayout()
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -182,6 +216,7 @@ class CandidateView @JvmOverloads constructor(
                 lastX = event.x
                 lastY = event.y
                 isDragging = false
+                pageChangeRequested = false
                 pressedControl = findControlAt(event.x, event.y)
                 moreButtonPressed = (pressedControl >= 0 || moreButtonRect.contains(event.x, event.y)) && candidates.isNotEmpty()
                 pressedIndex = if (moreButtonPressed) -1 else findItemAt(touchContentX(event.x), touchContentY(event.y))
@@ -205,6 +240,7 @@ class CandidateView @JvmOverloads constructor(
                     }
                     if (isDragging) {
                         scrollOffset = (scrollOffset + dy).coerceIn(0f, maxScrollOffset)
+                        requestPageChangeAtExpandedEdge(dy)
                         invalidate()
                     }
                     lastY = event.y
@@ -227,8 +263,8 @@ class CandidateView @JvmOverloads constructor(
                     val control = findControlAt(event.x, event.y)
                     if (expanded && control == pressedControl) {
                         when (control) {
-                            CONTROL_PREV -> onCandidatePageChange?.invoke(true)
-                            CONTROL_NEXT -> onCandidatePageChange?.invoke(false)
+                            CONTROL_SCROLL_UP -> scrollExpandedPage(forward = false)
+                            CONTROL_SCROLL_DOWN -> scrollExpandedPage(forward = true)
                             CONTROL_COLLAPSE -> setExpanded(false)
                         }
                     } else if (!expanded && moreButtonRect.contains(event.x, event.y)) {
@@ -241,8 +277,15 @@ class CandidateView @JvmOverloads constructor(
                 }
                 val idx = findItemAt(touchContentX(event.x), touchContentY(event.y))
                 if (!isDragging && idx in candidates.indices && idx == pressedIndex) {
-                    onCandidateIndexSelected?.invoke(idx)
-                    onCandidateSelected?.invoke(candidates[idx].text)
+                    if (expanded) {
+                        expandedCandidates.getOrNull(idx)?.let { candidate ->
+                            onExpandedCandidateIndexSelected?.invoke(candidate.pageIndex, candidate.pageLocalIndex)
+                            onCandidateSelected?.invoke(candidate.entry.text)
+                        }
+                    } else {
+                        onCandidateIndexSelected?.invoke(idx)
+                        onCandidateSelected?.invoke(candidates[idx].text)
+                    }
                 }
                 pressedIndex = -1
                 isDragging = false
@@ -253,6 +296,7 @@ class CandidateView @JvmOverloads constructor(
                 pressedIndex = -1
                 pressedControl = -1
                 moreButtonPressed = false
+                pageChangeRequested = false
                 isDragging = false
                 invalidate()
                 return true
@@ -303,6 +347,17 @@ class CandidateView @JvmOverloads constructor(
         if (expanded == value) return
         expanded = value
         scrollOffset = 0f
+        pageChangeRequested = false
+        if (expanded) {
+            expandedCandidates.clear()
+            expandedCandidates += currentPageCandidates.mapIndexed { index, entry ->
+                ExpandedCandidate(entry, 0, index)
+            }
+            candidates = expandedCandidates.map { it.entry }
+        } else {
+            candidates = currentPageCandidates
+            expandedCandidates.clear()
+        }
         onExpandedChanged?.invoke(expanded)
         requestLayout()
         invalidate()
@@ -313,12 +368,11 @@ class CandidateView @JvmOverloads constructor(
             controlRects = emptyList()
             return
         }
-        val buttonHeight = moreButtonRect.height() / 3f
-        controlRects = listOf(
-            RectF(moreButtonRect.left, moreButtonRect.top, moreButtonRect.right, moreButtonRect.top + buttonHeight),
-            RectF(moreButtonRect.left, moreButtonRect.top + buttonHeight, moreButtonRect.right, moreButtonRect.top + buttonHeight * 2f),
-            RectF(moreButtonRect.left, moreButtonRect.top + buttonHeight * 2f, moreButtonRect.right, moreButtonRect.bottom)
-        )
+        val controlHeight = moreButtonRect.height() / 3f
+        controlRects = (0 until 3).map { index ->
+            val top = moreButtonRect.top + index * controlHeight
+            RectF(moreButtonRect.left, top, moreButtonRect.right, top + controlHeight)
+        }
     }
 
     private fun drawMoreArrow(canvas: Canvas) {
@@ -352,6 +406,26 @@ class CandidateView @JvmOverloads constructor(
         commentPaint.textAlign = Paint.Align.LEFT
     }
 
+    private fun requestPageChangeAtExpandedEdge(dy: Float) {
+        if (!expanded || pageChangeRequested) return
+        val threshold = dp(1f)
+        if (dy > 0f && scrollOffset >= maxScrollOffset - threshold) {
+            pageChangeRequested = true
+            onExpandedLoadNextPage?.invoke()
+        }
+    }
+
+    private fun scrollExpandedPage(forward: Boolean) {
+        if (!expanded) return
+        val viewport = height.toFloat().coerceAtLeast(1f)
+        val delta = viewport * 0.85f * if (forward) 1f else -1f
+        scrollOffset = (scrollOffset + delta).coerceIn(0f, maxScrollOffset)
+        if (forward && scrollOffset >= maxScrollOffset - dp(1f)) {
+            requestPageChangeAtExpandedEdge(1f)
+        }
+        invalidate()
+    }
+
     private fun findItemAt(x: Float, y: Float): Int {
         itemRects.forEachIndexed { i, rect ->
             if (rect.contains(x, y)) return i
@@ -382,8 +456,14 @@ class CandidateView @JvmOverloads constructor(
     companion object {
         private const val DARK_BG = 0xFF20262C.toInt()
         private const val LIGHT_BG = 0xFFF7F8FA.toInt()
-        private const val CONTROL_PREV = 0
-        private const val CONTROL_NEXT = 1
+        private const val CONTROL_SCROLL_UP = 0
+        private const val CONTROL_SCROLL_DOWN = 1
         private const val CONTROL_COLLAPSE = 2
     }
+
+    private data class ExpandedCandidate(
+        val entry: CandidateEntry,
+        val pageIndex: Int,
+        val pageLocalIndex: Int
+    )
 }

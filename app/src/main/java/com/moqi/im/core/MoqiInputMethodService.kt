@@ -105,6 +105,8 @@ class MoqiInputMethodService : InputMethodService() {
     private var isListening: Boolean = false
     private var isSpaceVoiceHoldActive: Boolean = false
     private var isEngineInitializing: Boolean = true
+    private var expandedCandidatePageIndex: Int = 0
+    private var isExpandedCandidateLoading: Boolean = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val downloadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -232,17 +234,14 @@ class MoqiInputMethodService : InputMethodService() {
                 applyMoqiResult(engineResult.result)
             }
         }
+        candidateView?.setOnExpandedCandidateIndexSelectedListener { pageIndex, pageLocalIndex ->
+            selectExpandedCandidate(pageIndex, pageLocalIndex)
+        }
         candidateView?.setOnExpandedChangedListener { expanded ->
             setCandidateExpanded(expanded)
         }
-        candidateView?.setOnCandidatePageChangeListener { backward ->
-            if (!::engineRunner.isInitialized) {
-                showRimeInitializingIfNeeded()
-                return@setOnCandidatePageChangeListener
-            }
-            engineRunner.changeCandidatePage(backward = backward) { engineResult ->
-                applyMoqiResult(engineResult.result)
-            }
+        candidateView?.setOnExpandedLoadNextPageListener {
+            loadNextExpandedCandidatePage()
         }
 
         updateKeyboard()
@@ -848,6 +847,10 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun setCandidateExpanded(expanded: Boolean) {
         val view = candidateView ?: return
+        if (expanded) {
+            expandedCandidatePageIndex = 0
+            isExpandedCandidateLoading = false
+        }
         val targetHeight = if (expanded) {
             inputPanelView?.height?.takeIf { it > 0 } ?: dp(260)
         } else {
@@ -866,6 +869,75 @@ class MoqiInputMethodService : InputMethodService() {
         }
         if (expanded) {
             view.bringToFront()
+        }
+    }
+
+    private fun loadNextExpandedCandidatePage() {
+        if (!::engineRunner.isInitialized) {
+            showRimeInitializingIfNeeded()
+            return
+        }
+        if (isExpandedCandidateLoading) return
+        isExpandedCandidateLoading = true
+        engineRunner.changeCandidatePage(backward = false) { engineResult ->
+            val result = engineResult.result
+            if (!result.success) {
+                isExpandedCandidateLoading = false
+                applyMoqiResult(result)
+                return@changeCandidatePage
+            }
+            isExpandedCandidateLoading = false
+            if (result.handled && result.showCandidates && result.candidateEntries.isNotEmpty()) {
+                expandedCandidatePageIndex += 1
+                candidateView?.appendExpandedCandidateEntries(
+                    pageIndex = expandedCandidatePageIndex,
+                    entries = result.candidateEntries
+                )
+            } else {
+                candidateView?.appendExpandedCandidateEntries(
+                    pageIndex = expandedCandidatePageIndex,
+                    entries = emptyList()
+                )
+            }
+        }
+    }
+
+    private fun selectExpandedCandidate(pageIndex: Int, pageLocalIndex: Int) {
+        if (!::engineRunner.isInitialized) {
+            showRimeInitializingIfNeeded()
+            return
+        }
+        moveToExpandedCandidatePage(pageIndex) {
+            engineRunner.selectCandidate(pageLocalIndex) { engineResult ->
+                applyMoqiResult(engineResult.result)
+            }
+        }
+    }
+
+    private fun moveToExpandedCandidatePage(targetPageIndex: Int, onReady: () -> Unit) {
+        val delta = targetPageIndex - expandedCandidatePageIndex
+        if (delta == 0) {
+            onReady()
+            return
+        }
+        val backward = delta < 0
+        val steps = kotlin.math.abs(delta)
+        moveExpandedCandidatePageStep(backward, steps, onReady)
+    }
+
+    private fun moveExpandedCandidatePageStep(backward: Boolean, remainingSteps: Int, onReady: () -> Unit) {
+        if (remainingSteps <= 0) {
+            onReady()
+            return
+        }
+        engineRunner.changeCandidatePage(backward = backward) { engineResult ->
+            val result = engineResult.result
+            if (!result.success || !result.handled) {
+                applyMoqiResult(result)
+                return@changeCandidatePage
+            }
+            expandedCandidatePageIndex += if (backward) -1 else 1
+            moveExpandedCandidatePageStep(backward, remainingSteps - 1, onReady)
         }
     }
 
