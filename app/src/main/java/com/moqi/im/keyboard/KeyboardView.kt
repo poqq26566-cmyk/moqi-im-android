@@ -33,6 +33,8 @@ class KeyboardView @JvmOverloads constructor(
     private var keyGap: Float = 0f
     private var currentLayout: Layout = Layout.QWERTY_CN
     private var currentSymbolPage: SymbolPage = SymbolPage.COMMON
+    private var t9PinyinOptions: List<String> = emptyList()
+    private var t9PinyinOptionOffset: Int = 0
 
     private var rows: List<List<KeyDefinition>> = emptyList()
     private var keyRects: List<List<RectF>> = emptyList()
@@ -102,6 +104,22 @@ class KeyboardView @JvmOverloads constructor(
 
     fun isDirectCommitLayout(): Boolean =
         currentLayout == Layout.NUMBER || currentLayout == Layout.SYMBOL
+
+    fun setT9PinyinOptions(options: List<String>) {
+        t9PinyinOptions = options
+        t9PinyinOptionOffset = t9PinyinOptionOffset.coerceIn(
+            0,
+            maxOf(0, options.size - T9_VISIBLE_PINYIN_OPTIONS)
+        )
+        if (isT9Layout()) {
+            rows = when (currentLayout) {
+                Layout.T9_EN -> t9EnRows()
+                else -> t9CnRows()
+            }
+            requestLayout()
+            invalidate()
+        }
+    }
 
     fun showVoiceMode() {
         setLayout(Layout.VOICE)
@@ -242,6 +260,10 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (handleT9PinyinOptionScroll(event.x, event.y)) {
+                    invalidate()
+                    return true
+                }
                 if (updateSwipeState(event.x, event.y)) {
                     invalidate()
                     return true
@@ -313,6 +335,35 @@ class KeyboardView @JvmOverloads constructor(
             return true
         }
         return false
+    }
+
+    private fun handleT9PinyinOptionScroll(x: Float, y: Float): Boolean {
+        if (swipeTriggered || t9PinyinOptions.size <= T9_VISIBLE_PINYIN_OPTIONS) return false
+        val startKey = touchStartKey ?: return false
+        val key = keyAt(startKey) ?: return false
+        if (key.keyCode != KeyCode.T9_PINYIN_OPTION) return false
+        val dx = x - touchStartX
+        val dy = y - touchStartY
+        if (kotlin.math.abs(dy) <= swipeThresholdPx() || kotlin.math.abs(dy) <= kotlin.math.abs(dx)) {
+            return false
+        }
+        val newOffset = (t9PinyinOptionOffset + if (dy > 0f) 1 else -1).coerceIn(
+            0,
+            (t9PinyinOptions.size - T9_VISIBLE_PINYIN_OPTIONS).coerceAtLeast(0)
+        )
+        if (newOffset != t9PinyinOptionOffset) {
+            t9PinyinOptionOffset = newOffset
+            rows = when (currentLayout) {
+                Layout.T9_EN -> t9EnRows()
+                else -> t9CnRows()
+            }
+            requestLayout()
+        }
+        swipeTriggered = true
+        pressedKey = startKey
+        stopKeyRepeat()
+        stopSpaceLongPress(endVoice = spaceLongPressTriggered)
+        return true
     }
 
     private fun clearTouchTracking() {
@@ -428,6 +479,7 @@ class KeyboardView @JvmOverloads constructor(
         private const val SWIPE_INPUT_THRESHOLD_DP = 36f
         private const val MAIN_LETTER_TEXT_SIZE_SP = 21f
         private const val SYMBOL_TEXT_SIZE_SP = 23f
+        private const val T9_VISIBLE_PINYIN_OPTIONS = 3
     }
 
     private fun isSpecialKey(key: KeyDefinition): Boolean =
@@ -493,21 +545,21 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun t9CnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
-            KeyDefinition("，", KeyCode.COMMA, 0.72f),
+            t9SideKey(0, "，", KeyCode.COMMA),
             t9Key("1", KeyCode.T9_1, "1"),
             t9Key("ABC", KeyCode.T9_2, "2"),
             t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
         ),
         listOf(
-            KeyDefinition("。", KeyCode.PERIOD, 0.72f),
+            t9SideKey(1, "。", KeyCode.PERIOD),
             t9Key("GHI", KeyCode.T9_4, "4"),
             t9Key("JKL", KeyCode.T9_5, "5"),
             t9Key("MNO", KeyCode.T9_6, "6"),
             KeyDefinition("重输", KeyCode.RETYPE, 0.72f)
         ),
         listOf(
-            KeyDefinition("?", '?'.code, 0.72f),
+            t9SideKey(2, "?", '?'.code),
             t9Key("PQRS", KeyCode.T9_7, "7"),
             t9Key("TUV", KeyCode.T9_8, "8"),
             t9Key("WXYZ", KeyCode.T9_9, "9"),
@@ -525,21 +577,21 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun t9EnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
-            KeyDefinition(",", KeyCode.COMMA, 0.72f),
+            t9SideKey(0, ",", KeyCode.COMMA),
             t9Key("1", KeyCode.T9_1, "1"),
             t9Key("ABC", KeyCode.T9_2, "2"),
             t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
         ),
         listOf(
-            KeyDefinition(".", KeyCode.PERIOD, 0.72f),
+            t9SideKey(1, ".", KeyCode.PERIOD),
             t9Key("GHI", KeyCode.T9_4, "4"),
             t9Key("JKL", KeyCode.T9_5, "5"),
             t9Key("MNO", KeyCode.T9_6, "6"),
             KeyDefinition("Redo", KeyCode.RETYPE, 0.72f)
         ),
         listOf(
-            KeyDefinition("?", '?'.code, 0.72f),
+            t9SideKey(2, "?", '?'.code),
             t9Key("PQRS", KeyCode.T9_7, "7"),
             t9Key("TUV", KeyCode.T9_8, "8"),
             t9Key("WXYZ", KeyCode.T9_9, "9"),
@@ -557,6 +609,15 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun t9Key(label: String, keyCode: Int, digit: String, widthFactor: Float = 1f): KeyDefinition =
         KeyDefinition(label, keyCode, widthFactor, subLabel = digit.takeUnless { it == label }, swipeText = digit)
+
+    private fun t9SideKey(index: Int, fallbackLabel: String, fallbackKeyCode: Int): KeyDefinition {
+        val option = t9PinyinOptions.getOrNull(t9PinyinOptionOffset + index)
+        return if (option == null) {
+            KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
+        } else {
+            KeyDefinition(option, KeyCode.T9_PINYIN_OPTION, 0.72f, commitText = option)
+        }
+    }
 
     private fun numberRows(): List<List<KeyDefinition>> = listOf(
         listOf(

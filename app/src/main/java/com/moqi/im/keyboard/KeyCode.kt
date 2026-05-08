@@ -37,4 +37,5 @@ object KeyCode {
     const val SYMBOL_WEB = -404
     const val SYMBOL_PREV = -405
     const val SYMBOL_NEXT = -406
+    const val T9_PINYIN_OPTION = -501
 }

@@ -21,6 +21,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.Toast
+import com.moqi.im.engine.CandidateEntry
 import com.moqi.im.engine.InputMode
 import com.moqi.im.engine.MoqiImeEngineRunner
 import com.moqi.im.engine.MoqiImeKeyMapper
@@ -31,6 +32,7 @@ import com.moqi.im.keyboard.ComposeView
 import com.moqi.im.keyboard.KeyCode
 import com.moqi.im.keyboard.KeyboardMenuView
 import com.moqi.im.keyboard.KeyboardView
+import com.moqi.im.keyboard.T9Pinyin
 import com.moqi.im.voice.ModelManager
 import java.io.File
 import java.net.HttpURLConnection
@@ -126,6 +128,10 @@ class MoqiInputMethodService : InputMethodService() {
     }
     private var t9TapCount: Int = 0
     private var t9CurrentKey: Int = 0
+    private var t9PinyinDigits: StringBuilder = StringBuilder()
+    private var t9ActiveSegmentIndex: Int = 0
+    private val t9SelectedPinyinBySegment = mutableMapOf<Int, String>()
+    private val t9InferredPinyinBySegment = mutableMapOf<Int, String>()
     private var t9Runnable: Runnable? = null
     private val T9_TIMEOUT: Long = 800L
 
@@ -172,7 +178,9 @@ class MoqiInputMethodService : InputMethodService() {
         inputPanelView = imeView?.findViewById(com.moqi.im.R.id.input_panel)
 
         keyboardView?.setOnKeyListener { keyCode, isShifted, swipeText ->
-            if (swipeText != null) {
+            if (keyCode == KeyCode.T9_PINYIN_OPTION && swipeText != null) {
+                handleT9PinyinOption(swipeText)
+            } else if (swipeText != null) {
                 handleSwipeText(swipeText)
             } else {
                 handleKey(keyCode, isShifted)
@@ -437,6 +445,15 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.T9_9 -> '9'
             else -> return
         }
+        t9PinyinDigits.append(digit)
+        t9ActiveSegmentIndex = 0
+        t9SelectedPinyinBySegment.keys
+            .filter { it >= t9Segments().size }
+            .forEach { t9SelectedPinyinBySegment.remove(it) }
+        t9InferredPinyinBySegment.keys
+            .filter { it >= t9Segments().size }
+            .forEach { t9InferredPinyinBySegment.remove(it) }
+        updateT9PinyinOptions()
         submitMoqiKey(digit.code, digit.code) {
             if (currentMode == InputMode.ENGLISH) {
                 commitText(digit.toString())
@@ -444,9 +461,50 @@ class MoqiInputMethodService : InputMethodService() {
         }
     }
 
+    private fun handleT9PinyinOption(pinyin: String) {
+        if (!::engineRunner.isInitialized || pinyin.isBlank()) return
+        val segments = t9Segments()
+        if (segments.isEmpty()) return
+        val segmentIndex = t9ActiveSegmentIndex.coerceIn(0, segments.lastIndex)
+        t9SelectedPinyinBySegment[segmentIndex] = pinyin
+        t9ActiveSegmentIndex = (segmentIndex + 1).coerceAtMost(segments.lastIndex)
+        updateT9PinyinOptions()
+        val replayText = t9DisplayComposition().replace("'", "")
+        engineRunner.resetComposition {
+            composingText.clear()
+            candidateView?.setCandidates(emptyList())
+            replayText.forEach { ch ->
+                submitMoqiKey(ch.code, ch.code)
+            }
+        }
+    }
+
+    private fun updateT9PinyinOptions() {
+        val segments = t9Segments()
+        t9SelectedPinyinBySegment.keys
+            .filter { it >= segments.size }
+            .forEach { t9SelectedPinyinBySegment.remove(it) }
+        t9InferredPinyinBySegment.keys
+            .filter { it >= segments.size }
+            .forEach { t9InferredPinyinBySegment.remove(it) }
+        val options = if (isT9Mode && currentMode == InputMode.PINYIN && segments.isNotEmpty()) {
+            t9ActiveSegmentIndex = t9ActiveSegmentIndex.coerceIn(0, segments.lastIndex)
+            T9Pinyin.optionsFor(segments[t9ActiveSegmentIndex])
+        } else {
+            emptyList()
+        }
+        keyboardView?.setT9PinyinOptions(options)
+        updateComposeView()
+    }
+
     private fun resetT9State() {
         t9TapCount = 0
         t9CurrentKey = 0
+        t9PinyinDigits.clear()
+        t9SelectedPinyinBySegment.clear()
+        t9InferredPinyinBySegment.clear()
+        t9ActiveSegmentIndex = 0
+        updateT9PinyinOptions()
         t9Runnable = null
     }
 
@@ -472,6 +530,10 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun handleBackspace() {
+        if (isT9Mode && currentMode == InputMode.PINYIN && t9PinyinDigits.isNotEmpty()) {
+            t9PinyinDigits.deleteAt(t9PinyinDigits.lastIndex)
+            updateT9PinyinOptions()
+        }
         submitMoqiKey(MoqiImeKeyMapper.VK_BACK, fallbackOnFailure = true) {
             sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
         }
@@ -649,6 +711,7 @@ class MoqiInputMethodService : InputMethodService() {
                 clearRimeInitializingMessage()
             }
         }
+        resetT9State()
         composingText.clear()
         candidateView?.setCandidates(emptyList())
         updateComposeView()
@@ -659,6 +722,7 @@ class MoqiInputMethodService : InputMethodService() {
         if (::engineRunner.isInitialized) {
             engineRunner.resetComposition()
         }
+        resetT9State()
         composingText.clear()
         candidateView?.setCandidates(emptyList())
         updateComposeView()
@@ -683,19 +747,59 @@ class MoqiInputMethodService : InputMethodService() {
 
         if (result.commit.isNotBlank()) {
             currentInputConnection.commitText(result.commit, 1)
+            t9PinyinDigits.clear()
+            updateT9PinyinOptions()
         }
 
+        updateT9InferredPinyin(result.candidateEntries)
+        val displayComposition = t9DisplayComposition().takeIf { it.isNotBlank() } ?: result.composition
         composingText.clear()
-        composingText.append(result.composition)
+        composingText.append(displayComposition)
         updateComposeView()
 
         if (result.showCandidates) {
-            candidateView?.setCandidateEntries(result.candidateEntries)
+            candidateView?.setCandidateEntries(candidateEntriesForDisplay(result.candidateEntries))
         } else {
+            if (result.composition.isBlank()) {
+                t9PinyinDigits.clear()
+                updateT9PinyinOptions()
+            }
             updateCandidates(emptyList())
         }
 
         return result.handled
+    }
+
+    private fun candidateEntriesForDisplay(entries: List<CandidateEntry>): List<CandidateEntry> {
+        if (!isT9Mode || currentMode != InputMode.PINYIN || t9PinyinDigits.isEmpty()) return entries
+        return entries.map { it.copy(comment = "") }
+    }
+
+    private fun updateT9InferredPinyin(entries: List<CandidateEntry>) {
+        if (!isT9Mode || currentMode != InputMode.PINYIN || t9PinyinDigits.isEmpty()) return
+        val segments = t9Segments()
+        val inferred = entries.firstOrNull()
+            ?.comment
+            ?.trim()
+            ?.split(Regex("\\s+"))
+            .orEmpty()
+        if (inferred.size < segments.size) return
+        segments.indices.forEach { index ->
+            if (!t9SelectedPinyinBySegment.containsKey(index)) {
+                t9InferredPinyinBySegment[index] = inferred[index]
+            }
+        }
+    }
+
+    private fun t9Segments(): List<String> = T9Pinyin.segmentDigits(t9PinyinDigits.toString())
+
+    private fun t9DisplayComposition(): String {
+        if (!isT9Mode || currentMode != InputMode.PINYIN || t9PinyinDigits.isEmpty()) return ""
+        return t9Segments().mapIndexed { index, segment ->
+            t9SelectedPinyinBySegment[index]
+                ?: t9InferredPinyinBySegment[index]
+                ?: T9Pinyin.defaultPinyinFor(segment)
+        }.joinToString("'")
     }
 
     private fun submitMoqiKey(
@@ -806,7 +910,8 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun updateComposeView() {
-        composeView?.setComposingText(composingText.toString())
+        val displayText = t9DisplayComposition().takeIf { it.isNotBlank() } ?: composingText.toString()
+        composeView?.setComposingText(displayText)
     }
 
     private fun showRimeInitializingIfNeeded() {
