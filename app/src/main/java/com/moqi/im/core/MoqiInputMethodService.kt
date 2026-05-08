@@ -329,6 +329,14 @@ class MoqiInputMethodService : InputMethodService() {
         if (text.isBlank()) return
         performKeyVibration()
         val normalizedText = normalizeSwipeTextForMode(text)
+        if (keyboardView?.isDirectCommitLayout() == true) {
+            commitText(normalizedText)
+            return
+        }
+        if (isT9Mode && normalizedText.length == 1 && normalizedText[0].isDigit()) {
+            commitText(normalizedText)
+            return
+        }
         if (currentMode == InputMode.ENGLISH) {
             if (isPairedSymbol(normalizedText)) {
                 commitPairedText(normalizedText)

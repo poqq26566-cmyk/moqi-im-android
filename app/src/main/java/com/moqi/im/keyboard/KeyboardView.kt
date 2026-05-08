@@ -32,6 +32,7 @@ class KeyboardView @JvmOverloads constructor(
     private var keyHeight: Float = 0f
     private var keyGap: Float = 0f
     private var currentLayout: Layout = Layout.QWERTY_CN
+    private var currentSymbolPage: SymbolPage = SymbolPage.COMMON
 
     private var rows: List<List<KeyDefinition>> = emptyList()
     private var keyRects: List<List<RectF>> = emptyList()
@@ -51,6 +52,10 @@ class KeyboardView @JvmOverloads constructor(
 
     enum class ShiftState {
         LOWER, TEMP_UPPER, LOCKED_UPPER
+    }
+
+    private enum class SymbolPage {
+        COMMON, ENGLISH, CHINESE, WEB
     }
 
     private val isDarkMode: Boolean
@@ -95,6 +100,9 @@ class KeyboardView @JvmOverloads constructor(
         onSpaceLongPressListener = listener
     }
 
+    fun isDirectCommitLayout(): Boolean =
+        currentLayout == Layout.NUMBER || currentLayout == Layout.SYMBOL
+
     fun showVoiceMode() {
         setLayout(Layout.VOICE)
     }
@@ -128,12 +136,13 @@ class KeyboardView @JvmOverloads constructor(
         labelPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         labelPaint.textSize = when {
             isT9Layout() -> sp(MAIN_LETTER_TEXT_SIZE_SP)
-            isNumberOrSymbolLayout() -> dp(30f)
+            currentLayout == Layout.NUMBER -> dp(30f)
+            currentLayout == Layout.SYMBOL -> sp(SYMBOL_TEXT_SIZE_SP)
             else -> sp(MAIN_LETTER_TEXT_SIZE_SP)
         }
         labelPaint.textAlign = Paint.Align.CENTER
         subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-        subLabelPaint.textSize = if (isT9Layout() || isNumberOrSymbolLayout()) dp(13f) else dp(12f)
+        subLabelPaint.textSize = if (isNumberOrSymbolLayout()) dp(13f) else dp(12f)
         subLabelPaint.textAlign = Paint.Align.CENTER
         specialKeyPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         specialKeyPaint.textSize = dp(16f)
@@ -173,21 +182,15 @@ class KeyboardView @JvmOverloads constructor(
 
         val textBaseline = if (key.swipeText.isNullOrBlank() || isSpecialKey(key)) {
             rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
-        } else if (isT9Layout()) {
-            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f
         } else {
-            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f
+            rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f - dp(1f)
         }
         canvas.drawText(text, rect.centerX(), textBaseline, textPaint)
 
-        val subLabel = key.subLabel ?: key.swipeText
+        val subLabel = key.subLabel
         if (subLabel != null && !isSpecialKey(key)) {
             subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-            val subBaseline = if (isT9Layout()) {
-                rect.top + dp(18f)
-            } else {
-                rect.bottom - dp(8f)
-            }
+            val subBaseline = rect.bottom - dp(7f)
             canvas.drawText(subLabel, rect.centerX(), subBaseline, subLabelPaint)
         }
     }
@@ -372,7 +375,13 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun dispatchKey(keyPos: Pair<Int, Int>) {
         val key = keyAt(keyPos) ?: return
-        onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, null)
+        if (handleSymbolCategoryKey(key.keyCode)) return
+        val directText = if (isDirectCommitLayout() && !isSpecialKey(key) && key.keyCode >= 0) {
+            key.commitText ?: key.label
+        } else {
+            key.commitText
+        }
+        onKeyListener?.invoke(key.keyCode, shiftState != ShiftState.LOWER, directText)
     }
 
     private fun dispatchSwipeKey(keyPos: Pair<Int, Int>) {
@@ -418,6 +427,7 @@ class KeyboardView @JvmOverloads constructor(
         private const val SPACE_LONG_PRESS_DELAY_MS = 280L
         private const val SWIPE_INPUT_THRESHOLD_DP = 36f
         private const val MAIN_LETTER_TEXT_SIZE_SP = 21f
+        private const val SYMBOL_TEXT_SIZE_SP = 23f
     }
 
     private fun isSpecialKey(key: KeyDefinition): Boolean =
@@ -438,6 +448,35 @@ class KeyboardView @JvmOverloads constructor(
     private fun isT9PunctuationKey(keyCode: Int): Boolean =
         isT9Layout() && (keyCode == KeyCode.COMMA || keyCode == KeyCode.PERIOD)
 
+    private fun handleSymbolCategoryKey(keyCode: Int): Boolean {
+        val page = when (keyCode) {
+            KeyCode.SYMBOL_COMMON -> SymbolPage.COMMON
+            KeyCode.SYMBOL_ENGLISH -> SymbolPage.ENGLISH
+            KeyCode.SYMBOL_CHINESE -> SymbolPage.CHINESE
+            KeyCode.SYMBOL_WEB -> SymbolPage.WEB
+            KeyCode.SYMBOL_PREV -> previousSymbolPage()
+            KeyCode.SYMBOL_NEXT -> nextSymbolPage()
+            else -> return false
+        }
+        currentSymbolPage = page
+        rows = symbolRows()
+        requestLayout()
+        invalidate()
+        return true
+    }
+
+    private fun previousSymbolPage(): SymbolPage {
+        val pages = SymbolPage.values()
+        val index = pages.indexOf(currentSymbolPage)
+        return pages[(index - 1 + pages.size) % pages.size]
+    }
+
+    private fun nextSymbolPage(): SymbolPage {
+        val pages = SymbolPage.values()
+        val index = pages.indexOf(currentSymbolPage)
+        return pages[(index + 1) % pages.size]
+    }
+
     private fun qwertyCnRows(): List<List<KeyDefinition>> = listOf(
         rowOf("qwertyuiop", "1234567890"),
         rowOf("asdfghjkl", listOf("~", "!", "@", "#", "%", "“”", "（）", "*", "?")),
@@ -455,24 +494,24 @@ class KeyboardView @JvmOverloads constructor(
     private fun t9CnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
             KeyDefinition("，", KeyCode.COMMA, 0.72f),
-            KeyDefinition("1", KeyCode.T9_1, 1f),
-            KeyDefinition("ABC", KeyCode.T9_2, 1f, subLabel = "2"),
-            KeyDefinition("DEF", KeyCode.T9_3, 1f, subLabel = "3"),
+            t9Key("1", KeyCode.T9_1, "1"),
+            t9Key("ABC", KeyCode.T9_2, "2"),
+            t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
         ),
         listOf(
             KeyDefinition("。", KeyCode.PERIOD, 0.72f),
-            KeyDefinition("GHI", KeyCode.T9_4, 1f, subLabel = "4"),
-            KeyDefinition("JKL", KeyCode.T9_5, 1f, subLabel = "5"),
-            KeyDefinition("MNO", KeyCode.T9_6, 1f, subLabel = "6"),
+            t9Key("GHI", KeyCode.T9_4, "4"),
+            t9Key("JKL", KeyCode.T9_5, "5"),
+            t9Key("MNO", KeyCode.T9_6, "6"),
             KeyDefinition("重输", KeyCode.RETYPE, 0.72f)
         ),
         listOf(
             KeyDefinition("?", '?'.code, 0.72f),
-            KeyDefinition("PQRS", KeyCode.T9_7, 1f, subLabel = "7"),
-            KeyDefinition("TUV", KeyCode.T9_8, 1f, subLabel = "8"),
-            KeyDefinition("WXYZ", KeyCode.T9_9, 1f, subLabel = "9"),
-            KeyDefinition("0", KeyCode.T9_0, 0.72f)
+            t9Key("PQRS", KeyCode.T9_7, "7"),
+            t9Key("TUV", KeyCode.T9_8, "8"),
+            t9Key("WXYZ", KeyCode.T9_9, "9"),
+            t9Key("0", KeyCode.T9_0, "0", 0.72f)
         ),
         listOf(
             KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
@@ -487,24 +526,24 @@ class KeyboardView @JvmOverloads constructor(
     private fun t9EnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
             KeyDefinition(",", KeyCode.COMMA, 0.72f),
-            KeyDefinition("1", KeyCode.T9_1, 1f),
-            KeyDefinition("ABC", KeyCode.T9_2, 1f, subLabel = "2"),
-            KeyDefinition("DEF", KeyCode.T9_3, 1f, subLabel = "3"),
+            t9Key("1", KeyCode.T9_1, "1"),
+            t9Key("ABC", KeyCode.T9_2, "2"),
+            t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
         ),
         listOf(
             KeyDefinition(".", KeyCode.PERIOD, 0.72f),
-            KeyDefinition("GHI", KeyCode.T9_4, 1f, subLabel = "4"),
-            KeyDefinition("JKL", KeyCode.T9_5, 1f, subLabel = "5"),
-            KeyDefinition("MNO", KeyCode.T9_6, 1f, subLabel = "6"),
+            t9Key("GHI", KeyCode.T9_4, "4"),
+            t9Key("JKL", KeyCode.T9_5, "5"),
+            t9Key("MNO", KeyCode.T9_6, "6"),
             KeyDefinition("Redo", KeyCode.RETYPE, 0.72f)
         ),
         listOf(
             KeyDefinition("?", '?'.code, 0.72f),
-            KeyDefinition("PQRS", KeyCode.T9_7, 1f, subLabel = "7"),
-            KeyDefinition("TUV", KeyCode.T9_8, 1f, subLabel = "8"),
-            KeyDefinition("WXYZ", KeyCode.T9_9, 1f, subLabel = "9"),
-            KeyDefinition("0", KeyCode.T9_0, 0.72f)
+            t9Key("PQRS", KeyCode.T9_7, "7"),
+            t9Key("TUV", KeyCode.T9_8, "8"),
+            t9Key("WXYZ", KeyCode.T9_9, "9"),
+            t9Key("0", KeyCode.T9_0, "0", 0.72f)
         ),
         listOf(
             KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
@@ -515,6 +554,9 @@ class KeyboardView @JvmOverloads constructor(
             KeyDefinition("↵", KeyCode.ENTER, 0.66f)
         )
     )
+
+    private fun t9Key(label: String, keyCode: Int, digit: String, widthFactor: Float = 1f): KeyDefinition =
+        KeyDefinition(label, keyCode, widthFactor, subLabel = digit.takeUnless { it == label }, swipeText = digit)
 
     private fun numberRows(): List<List<KeyDefinition>> = listOf(
         listOf(
@@ -547,43 +589,65 @@ class KeyboardView @JvmOverloads constructor(
         )
     )
 
-    private fun symbolRows(): List<List<KeyDefinition>> = listOf(
-        listOf(
-            KeyDefinition("常用", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition("-", '-'.code, 1f),
-            KeyDefinition("，", ','.code, 1f),
-            KeyDefinition("。", '.'.code, 1f),
-            KeyDefinition("?", '?'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("英文", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition("!", '!'.code, 1f),
-            KeyDefinition("✓", '✓'.code, 1f),
-            KeyDefinition("×", '×'.code, 1f),
-            KeyDefinition("@", '@'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("中文", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition(".", '.'.code, 1f),
-            KeyDefinition("~", '~'.code, 1f),
-            KeyDefinition("#", '#'.code, 1f),
-            KeyDefinition("_", '_'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("网络", KeyCode.SYMBOL_LAYOUT, 0.72f),
-            KeyDefinition("'", '\''.code, 1f),
-            KeyDefinition(".com", KeyCode.TEXT_DOT_COM, 1f),
-            KeyDefinition(":", ':'.code, 1f),
-            KeyDefinition("*", '*'.code, 1f)
-        ),
-        listOf(
-            KeyDefinition("返回", KeyCode.RETURN_TO_TEXT, 1f),
-            KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
-            KeyDefinition("⌃", KeyCode.SYMBOL_LAYOUT, 1f),
-            KeyDefinition("⌄", KeyCode.SYMBOL_LAYOUT, 1f),
-            KeyDefinition("⌫", KeyCode.DELETE, 1f, isRepeatable = true)
+    private fun symbolRows(): List<List<KeyDefinition>> {
+        val symbols = when (currentSymbolPage) {
+            SymbolPage.COMMON -> listOf(
+                listOf("-", "，", "。", "?"),
+                listOf("!", "✓", "×", "@"),
+                listOf(".", "~", "#", "_"),
+                listOf("'", ".com", ":", "*")
+            )
+            SymbolPage.ENGLISH -> listOf(
+                listOf(",", ".", "?", "!"),
+                listOf(";", ":", "'", "\""),
+                listOf("-", "_", "(", ")"),
+                listOf("@", "#", "$", "&")
+            )
+            SymbolPage.CHINESE -> listOf(
+                listOf("，", "。", "？", "！"),
+                listOf("；", "：", "、", "……"),
+                listOf("“”", "（）", "《", "》"),
+                listOf("【", "】", "￥", "·")
+            )
+            SymbolPage.WEB -> listOf(
+                listOf(".com", "www.", "https://", "/"),
+                listOf("@", ".", "_", "-"),
+                listOf(":", "#", "?", "="),
+                listOf("&", "%", "+", "*")
+            )
+        }
+        return listOf(
+            symbolCategoryRow("常用", KeyCode.SYMBOL_COMMON, SymbolPage.COMMON, symbols[0]),
+            symbolCategoryRow("英文", KeyCode.SYMBOL_ENGLISH, SymbolPage.ENGLISH, symbols[1]),
+            symbolCategoryRow("中文", KeyCode.SYMBOL_CHINESE, SymbolPage.CHINESE, symbols[2]),
+            symbolCategoryRow("网络", KeyCode.SYMBOL_WEB, SymbolPage.WEB, symbols[3]),
+            listOf(
+                KeyDefinition("返回", KeyCode.RETURN_TO_TEXT, 1f),
+                KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
+                KeyDefinition("⌃", KeyCode.SYMBOL_PREV, 1f),
+                KeyDefinition("⌄", KeyCode.SYMBOL_NEXT, 1f),
+                KeyDefinition("⌫", KeyCode.DELETE, 1f, isRepeatable = true)
+            )
         )
+    }
+
+    private fun symbolCategoryRow(
+        label: String,
+        keyCode: Int,
+        page: SymbolPage,
+        symbols: List<String>
+    ): List<KeyDefinition> = listOf(
+        KeyDefinition(label, keyCode, 0.72f, isSticky = currentSymbolPage == page),
+        *symbols.map { symbolKey(it) }.toTypedArray()
     )
+
+    private fun symbolKey(label: String): KeyDefinition {
+        val keyCode = when (label) {
+            ".com" -> KeyCode.TEXT_DOT_COM
+            else -> label.singleOrNull()?.code ?: label.first().code
+        }
+        return KeyDefinition(label, keyCode, 1f, commitText = label)
+    }
 
     private fun rowOf(chars: String, swipeChars: String? = null): List<KeyDefinition> {
         return chars.mapIndexed { index, ch ->

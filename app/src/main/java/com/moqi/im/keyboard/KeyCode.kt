@@ -31,4 +31,10 @@ object KeyCode {
     const val SWITCH_TO_QWERTY = -301
     const val SWITCH_TO_T9 = -302
     const val EXIT_VOICE = -303
+    const val SYMBOL_COMMON = -401
+    const val SYMBOL_ENGLISH = -402
+    const val SYMBOL_CHINESE = -403
+    const val SYMBOL_WEB = -404
+    const val SYMBOL_PREV = -405
+    const val SYMBOL_NEXT = -406
 }
