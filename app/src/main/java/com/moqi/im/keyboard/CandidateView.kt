@@ -14,6 +14,7 @@ import android.view.VelocityTracker
 import android.widget.OverScroller
 import com.moqi.im.R
 import com.moqi.im.engine.CandidateEntry
+import com.moqi.im.engine.CandidateEntrySource
 import kotlin.math.abs
 
 class CandidateView @JvmOverloads constructor(
@@ -41,9 +42,11 @@ class CandidateView @JvmOverloads constructor(
     private var expandedGridStartIndex: Int = 0
     private var itemRects: List<RectF> = emptyList()
     private var controlRects: List<RectF> = emptyList()
+    private var menuButtonRect = RectF()
     private var moreButtonRect = RectF()
     private var pressedIndex: Int = -1
     private var pressedControl: Int = -1
+    private var menuButtonPressed = false
     private var moreButtonPressed = false
     private var expanded = false
     private var scrollOffset = 0f
@@ -68,6 +71,8 @@ class CandidateView @JvmOverloads constructor(
     private var onCandidatePageChange: ((Boolean) -> Unit)? = null
     private var onExpandedLoadNextPage: (() -> Unit)? = null
     private var onMenuClick: (() -> Unit)? = null
+    private var onKeyboardDismiss: (() -> Unit)? = null
+    private var onClipboardDismiss: (() -> Unit)? = null
 
     private val isDarkMode: Boolean
         get() = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -100,6 +105,22 @@ class CandidateView @JvmOverloads constructor(
 
     fun getFirstCandidate(): String? = candidates.firstOrNull()?.text
 
+    fun getCandidateEntry(index: Int): CandidateEntry? = candidates.getOrNull(index)
+
+    fun getCurrentPageCandidateEntry(index: Int): CandidateEntry? = currentPageCandidates.getOrNull(index)
+
+    fun rimeCandidateIndexFor(index: Int): Int {
+        val entry = candidates.getOrNull(index) ?: return -1
+        if (entry.source != CandidateEntrySource.RIME) return -1
+        return candidates.take(index + 1).count { it.source == CandidateEntrySource.RIME } - 1
+    }
+
+    fun rimeCurrentPageCandidateIndexFor(index: Int): Int {
+        val entry = currentPageCandidates.getOrNull(index) ?: return -1
+        if (entry.source != CandidateEntrySource.RIME) return -1
+        return currentPageCandidates.take(index + 1).count { it.source == CandidateEntrySource.RIME } - 1
+    }
+
     fun setOnCandidateSelectedListener(listener: (String) -> Unit) {
         onCandidateSelected = listener
     }
@@ -126,6 +147,14 @@ class CandidateView @JvmOverloads constructor(
 
     fun setOnMenuClickListener(listener: () -> Unit) {
         onMenuClick = listener
+    }
+
+    fun setOnKeyboardDismissListener(listener: () -> Unit) {
+        onKeyboardDismiss = listener
+    }
+
+    fun setOnClipboardDismissListener(listener: () -> Unit) {
+        onClipboardDismiss = listener
     }
 
     fun appendExpandedCandidateEntries(pageIndex: Int, entries: List<CandidateEntry>) {
@@ -156,7 +185,7 @@ class CandidateView @JvmOverloads constructor(
         arrowPaint.color = if (isDarkMode) 0xFFB8C0C8.toInt() else 0xFF69727D.toInt()
 
         canvas.save()
-        canvas.clipRect(0f, 0f, moreButtonRect.left, height.toFloat())
+        canvas.clipRect(menuButtonRect.right, 0f, moreButtonRect.left, height.toFloat())
         val headerHeight = candidateBarHeight()
         if (!expanded) {
             canvas.translate(-scrollOffset, 0f)
@@ -204,6 +233,9 @@ class CandidateView @JvmOverloads constructor(
         }
         canvas.restore()
 
+        if (shouldShowMenuButton()) {
+            drawMenuButton(canvas)
+        }
         if (candidates.isNotEmpty()) {
             if (moreButtonPressed) {
                 canvas.drawRoundRect(moreButtonRect, dp(6f), dp(6f), highlightPaint)
@@ -211,8 +243,10 @@ class CandidateView @JvmOverloads constructor(
             canvas.drawLine(moreButtonRect.left, dp(8f), moreButtonRect.left, height - dp(8f), dividerPaint)
             if (expanded) {
                 drawExpandedControls(canvas)
+            } else if (hasClipboardCandidate()) {
+                drawCloseIcon(canvas, moreButtonRect)
             } else {
-                drawMoreArrow(canvas)
+                drawMoreArrow(canvas, moreButtonRect)
             }
         }
 
@@ -220,12 +254,12 @@ class CandidateView @JvmOverloads constructor(
             commentPaint.color = if (isDarkMode) 0xFF858C94.toInt() else 0xFF8A929C.toInt()
             commentPaint.textAlign = Paint.Align.CENTER
             val baseline = height / 2f - (commentPaint.descent() + commentPaint.ascent()) / 2f
-            canvas.drawText("墨奇输入法", moreButtonRect.left / 2f, baseline, commentPaint)
+            canvas.drawText("墨奇输入法", (menuButtonRect.right + moreButtonRect.left) / 2f, baseline, commentPaint)
             if (moreButtonPressed) {
                 canvas.drawRoundRect(moreButtonRect, dp(6f), dp(6f), highlightPaint)
             }
             canvas.drawLine(moreButtonRect.left, dp(8f), moreButtonRect.left, height - dp(8f), dividerPaint)
-            canvas.drawText("...", moreButtonRect.centerX(), baseline, commentPaint)
+            drawKeyboardDismissArrow(canvas, moreButtonRect)
             commentPaint.textAlign = Paint.Align.LEFT
         }
     }
@@ -271,14 +305,23 @@ class CandidateView @JvmOverloads constructor(
                 lastY = event.y
                 isDragging = false
                 pageChangeRequested = false
+                menuButtonPressed = shouldShowMenuButton() && menuButtonRect.contains(event.x, event.y)
                 pressedControl = findControlAt(event.x, event.y)
-                moreButtonPressed = (pressedControl >= 0 || moreButtonRect.contains(event.x, event.y)) &&
+                moreButtonPressed = !menuButtonPressed &&
+                    (pressedControl >= 0 || moreButtonRect.contains(event.x, event.y)) &&
                     (candidates.isNotEmpty() || !expanded)
-                pressedIndex = if (moreButtonPressed) -1 else findItemAt(touchContentX(event.x), touchContentY(event.y))
+                pressedIndex = if (menuButtonPressed || moreButtonPressed) -1 else findItemAt(touchContentX(event.x), touchContentY(event.y))
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (menuButtonPressed) {
+                    if (!menuButtonRect.contains(event.x, event.y)) {
+                        menuButtonPressed = false
+                        invalidate()
+                    }
+                    return true
+                }
                 if (moreButtonPressed) {
                     if (pressedControl >= 0 && findControlAt(event.x, event.y) != pressedControl) {
                         moreButtonPressed = false
@@ -314,6 +357,15 @@ class CandidateView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                if (menuButtonPressed) {
+                    if (menuButtonRect.contains(event.x, event.y)) {
+                        onMenuClick?.invoke()
+                    }
+                    menuButtonPressed = false
+                    recycleVelocityTracker()
+                    invalidate()
+                    return true
+                }
                 if (moreButtonPressed) {
                     val control = findControlAt(event.x, event.y)
                     if (expanded && control == pressedControl) {
@@ -323,10 +375,12 @@ class CandidateView @JvmOverloads constructor(
                             CONTROL_SCROLL_DOWN -> scrollExpandedPage(forward = true)
                         }
                     } else if (!expanded && moreButtonRect.contains(event.x, event.y)) {
-                        if (candidates.isEmpty()) {
-                            onMenuClick?.invoke()
-                        } else {
+                        if (hasClipboardCandidate()) {
+                            onClipboardDismiss?.invoke()
+                        } else if (candidates.isNotEmpty()) {
                             setExpanded(true)
+                        } else {
+                            onKeyboardDismiss?.invoke()
                         }
                     }
                     moreButtonPressed = false
@@ -362,6 +416,7 @@ class CandidateView @JvmOverloads constructor(
                 }
                 pressedIndex = -1
                 pressedControl = -1
+                menuButtonPressed = false
                 moreButtonPressed = false
                 pageChangeRequested = false
                 isDragging = false
@@ -375,23 +430,30 @@ class CandidateView @JvmOverloads constructor(
 
     private fun calculateItemRects(totalWidth: Int, totalHeight: Float = height.toFloat()) {
         val padding = dp(4f)
-        val moreButtonWidth = dp(48f)
-        val contentWidth = (totalWidth - moreButtonWidth).coerceAtLeast(0f)
-        moreButtonRect = RectF(contentWidth, 0f, totalWidth.toFloat(), totalHeight)
+        val buttonWidth = dp(48f)
+        menuButtonRect = if (candidates.isEmpty()) {
+            RectF(0f, 0f, buttonWidth, totalHeight)
+        } else {
+            RectF()
+        }
+        moreButtonRect = RectF((totalWidth - buttonWidth).coerceAtLeast(0f), 0f, totalWidth.toFloat(), totalHeight)
+        val contentLeft = menuButtonRect.right
+        val contentRight = moreButtonRect.left
+        val contentWidth = (contentRight - contentLeft).coerceAtLeast(0f)
         if (expanded) {
             val columns = 3
             val itemGap = dp(4f)
             val headerHeight = candidateBarHeight()
             val rowHeight = dp(42f)
             val itemWidth = ((contentWidth - padding * 2 - itemGap * (columns - 1)) / columns).coerceAtLeast(dp(62f))
-            var x = padding
+            var x = contentLeft + padding
             val rects = mutableListOf<RectF>()
             expandedGridStartIndex = candidates.indexOfFirst { candidate ->
                 val desiredWidth = dp(24f) +
                     textPaint.measureText(candidate.text) +
                     if (candidate.comment.isBlank()) 0f else dp(8f) + commentPaint.measureText(candidate.comment)
                 val itemWidthInHeader = desiredWidth.coerceAtLeast(dp(54f))
-                if (x + itemWidthInHeader <= contentWidth || rects.isEmpty()) {
+                if (x + itemWidthInHeader <= contentRight || rects.isEmpty()) {
                     rects += RectF(x, 0f, x + itemWidthInHeader, headerHeight)
                     x += itemWidthInHeader
                     false
@@ -403,7 +465,7 @@ class CandidateView @JvmOverloads constructor(
                 val gridIndex = index - expandedGridStartIndex
                 val row = gridIndex / columns
                 val col = gridIndex % columns
-                val left = padding + col * (itemWidth + itemGap)
+                val left = contentLeft + padding + col * (itemWidth + itemGap)
                 val top = headerHeight + padding + row * rowHeight
                 rects += RectF(left, top, left + itemWidth, top + rowHeight)
             }
@@ -414,7 +476,7 @@ class CandidateView @JvmOverloads constructor(
             maxScrollOffset = (contentHeight - totalHeight).coerceAtLeast(0f)
             scrollOffset = scrollOffset.coerceIn(0f, maxScrollOffset)
         } else {
-            var x = padding
+            var x = contentLeft + padding
             itemRects = candidates.map { candidate ->
                 val desiredWidth = dp(24f) +
                     textPaint.measureText(candidate.text) +
@@ -424,7 +486,7 @@ class CandidateView @JvmOverloads constructor(
                     x += itemWidth
                 }
             }
-            maxScrollOffset = (x + padding - contentWidth).coerceAtLeast(0f)
+            maxScrollOffset = (x + padding - contentRight).coerceAtLeast(0f)
             scrollOffset = scrollOffset.coerceIn(0f, maxScrollOffset)
         }
         calculateControlRects()
@@ -468,9 +530,25 @@ class CandidateView @JvmOverloads constructor(
         )
     }
 
-    private fun drawMoreArrow(canvas: Canvas) {
-        val cx = moreButtonRect.centerX()
-        val cy = moreButtonRect.centerY() + dp(1f)
+    private fun hasClipboardCandidate(): Boolean =
+        candidates.firstOrNull()?.source == CandidateEntrySource.CLIPBOARD
+
+    private fun shouldShowMenuButton(): Boolean = candidates.isEmpty() && !menuButtonRect.isEmpty
+
+    private fun drawMenuButton(canvas: Canvas) {
+        if (menuButtonPressed) {
+            canvas.drawRoundRect(menuButtonRect, dp(6f), dp(6f), highlightPaint)
+        }
+        canvas.drawLine(menuButtonRect.right, dp(8f), menuButtonRect.right, height - dp(8f), dividerPaint)
+        commentPaint.textAlign = Paint.Align.CENTER
+        val baseline = menuButtonRect.centerY() - (commentPaint.descent() + commentPaint.ascent()) / 2f
+        canvas.drawText("...", menuButtonRect.centerX(), baseline, commentPaint)
+        commentPaint.textAlign = Paint.Align.LEFT
+    }
+
+    private fun drawMoreArrow(canvas: Canvas, rect: RectF) {
+        val cx = rect.centerX()
+        val cy = rect.centerY() + dp(1f)
         val halfWidth = dp(8f)
         val halfHeight = dp(5f)
         val path = Path().apply {
@@ -480,6 +558,19 @@ class CandidateView @JvmOverloads constructor(
             close()
         }
         canvas.drawPath(path, arrowPaint)
+    }
+
+    private fun drawKeyboardDismissArrow(canvas: Canvas, rect: RectF) {
+        drawMoreArrow(canvas, rect)
+    }
+
+    private fun drawCloseIcon(canvas: Canvas, rect: RectF) {
+        arrowPaint.strokeWidth = dp(2.4f)
+        arrowPaint.style = Paint.Style.STROKE
+        val size = dp(8f)
+        canvas.drawLine(rect.centerX() - size, rect.centerY() - size, rect.centerX() + size, rect.centerY() + size, arrowPaint)
+        canvas.drawLine(rect.centerX() + size, rect.centerY() - size, rect.centerX() - size, rect.centerY() + size, arrowPaint)
+        arrowPaint.style = Paint.Style.FILL
     }
 
     private fun drawExpandedControls(canvas: Canvas) {

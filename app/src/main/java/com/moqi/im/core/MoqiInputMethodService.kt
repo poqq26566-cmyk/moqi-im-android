@@ -1,6 +1,8 @@
 package com.moqi.im.core
 
 import android.annotation.SuppressLint
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
@@ -22,6 +24,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import com.moqi.im.engine.CandidateEntry
+import com.moqi.im.engine.CandidateEntrySource
 import com.moqi.im.engine.InputMode
 import com.moqi.im.engine.MoqiImeEngineRunner
 import com.moqi.im.engine.MoqiImeKeyMapper
@@ -48,6 +51,7 @@ class MoqiInputMethodService : InputMethodService() {
         private const val RIME_INIT_MESSAGE = "正在初始化 Rime…"
         private const val KEY_VIBRATION_MS = 12L
         private const val INITIAL_EXPANDED_PREFETCH_PAGES = 5
+        private const val CLIPBOARD_CANDIDATE_PREVIEW_MAX = 42
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -112,6 +116,14 @@ class MoqiInputMethodService : InputMethodService() {
     private var expandedCandidatePageIndex: Int = 0
     private var isExpandedCandidateLoading: Boolean = false
     private var expandedCandidateInitialPrefetchRemaining: Int = 0
+    private var dismissedClipboardText: String? = null
+    private var clipboardManager: ClipboardManager? = null
+    private val clipboardChangeListener = ClipboardManager.OnPrimaryClipChangedListener {
+        dismissedClipboardText = null
+        if (composingText.isBlank()) {
+            updateCandidates(emptyList())
+        }
+    }
 
     private val handler = Handler(Looper.getMainLooper())
     private val downloadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
@@ -237,11 +249,19 @@ class MoqiInputMethodService : InputMethodService() {
         }
 
         candidateView?.setOnCandidateIndexSelectedListener { index ->
+            val candidateView = candidateView ?: return@setOnCandidateIndexSelectedListener
+            val entry = candidateView.getCandidateEntry(index)
+            if (entry?.source == CandidateEntrySource.CLIPBOARD) {
+                commitClipboardCandidate(entry)
+                return@setOnCandidateIndexSelectedListener
+            }
             if (!::engineRunner.isInitialized) {
                 showRimeInitializingIfNeeded()
                 return@setOnCandidateIndexSelectedListener
             }
-            engineRunner.selectCandidate(index) { engineResult ->
+            val rimeIndex = candidateView.rimeCandidateIndexFor(index)
+            if (rimeIndex < 0) return@setOnCandidateIndexSelectedListener
+            engineRunner.selectCandidate(rimeIndex) { engineResult ->
                 applyMoqiResult(engineResult.result)
             }
         }
@@ -257,6 +277,14 @@ class MoqiInputMethodService : InputMethodService() {
         candidateView?.setOnMenuClickListener {
             showMenuPanel()
         }
+        candidateView?.setOnKeyboardDismissListener {
+            requestHideSelf(0)
+        }
+        candidateView?.setOnClipboardDismissListener {
+            dismissedClipboardText = currentClipboardText()
+            updateCandidates(emptyList())
+        }
+        registerClipboardListener()
 
         updateKeyboard()
         showRimeInitializingIfNeeded()
@@ -495,7 +523,7 @@ class MoqiInputMethodService : InputMethodService() {
     private fun replayTextToEngine(replayText: String) {
         engineRunner.resetComposition {
             composingText.clear()
-            candidateView?.setCandidates(emptyList())
+            updateCandidateEntries(emptyList())
             replayText.forEach { ch ->
                 submitMoqiKey(ch.code, ch.code)
             }
@@ -559,10 +587,12 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun commitText(text: String) {
+        consumeClipboardSuggestion()
         currentInputConnection.commitText(text, 1)
     }
 
     private fun commitPairedText(text: String) {
+        consumeClipboardSuggestion()
         currentInputConnection.commitText(text, 1)
         sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT)
     }
@@ -646,6 +676,7 @@ class MoqiInputMethodService : InputMethodService() {
         isSpaceVoiceHoldActive = false
         val text = composingText.toString().trim()
         if (text.isNotBlank()) {
+            consumeClipboardSuggestion()
             currentInputConnection.commitText(text, 1)
         }
         stopVoiceListening()
@@ -689,6 +720,7 @@ class MoqiInputMethodService : InputMethodService() {
                 updateComposeView()
             },
             onFinalResult = { text ->
+                consumeClipboardSuggestion()
                 currentInputConnection.commitText(text, 1)
                 composingText.clear()
                 composeView?.setComposingText("正在聆听...")
@@ -763,7 +795,7 @@ class MoqiInputMethodService : InputMethodService() {
         }
         resetT9State()
         composingText.clear()
-        candidateView?.setCandidates(emptyList())
+            updateCandidateEntries(emptyList())
         updateComposeView()
         showRimeInitializingIfNeeded()
     }
@@ -774,7 +806,7 @@ class MoqiInputMethodService : InputMethodService() {
         }
         resetT9State()
         composingText.clear()
-        candidateView?.setCandidates(emptyList())
+            updateCandidateEntries(emptyList())
         updateComposeView()
         showRimeInitializingIfNeeded()
     }
@@ -796,6 +828,7 @@ class MoqiInputMethodService : InputMethodService() {
         }
 
         if (result.commit.isNotBlank()) {
+            consumeClipboardSuggestion()
             currentInputConnection.commitText(result.commit, 1)
             t9PinyinDigits.clear()
             updateT9PinyinOptions()
@@ -805,10 +838,13 @@ class MoqiInputMethodService : InputMethodService() {
         val displayComposition = t9DisplayComposition().takeIf { it.isNotBlank() } ?: result.composition
         composingText.clear()
         composingText.append(displayComposition)
+        if (displayComposition.isNotBlank() || result.showCandidates) {
+            consumeClipboardSuggestion()
+        }
         updateComposeView()
 
         if (result.showCandidates) {
-            candidateView?.setCandidateEntries(candidateEntriesForDisplay(result.candidateEntries))
+            updateCandidateEntries(candidateEntriesForDisplay(result.candidateEntries))
         } else {
             if (result.composition.isBlank()) {
                 t9PinyinDigits.clear()
@@ -957,7 +993,59 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun updateCandidates(candidates: List<String>) {
-        candidateView?.setCandidates(candidates)
+        updateCandidateEntries(candidates.map { CandidateEntry(it, "") })
+    }
+
+    private fun updateCandidateEntries(entries: List<CandidateEntry>) {
+        candidateView?.setCandidateEntries(withClipboardCandidate(entries))
+    }
+
+    private fun withClipboardCandidate(entries: List<CandidateEntry>): List<CandidateEntry> {
+        if (entries.isNotEmpty() || composingText.isNotBlank()) return entries
+        val clipboardText = currentClipboardText() ?: return entries
+        if (clipboardText == dismissedClipboardText) return entries
+        val normalizedPreview = clipboardText
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(CLIPBOARD_CANDIDATE_PREVIEW_MAX)
+        if (normalizedPreview.isBlank()) return entries
+        val clipboardEntry = CandidateEntry(
+            text = normalizedPreview,
+            comment = "剪贴板",
+            source = CandidateEntrySource.CLIPBOARD,
+            commitText = clipboardText
+        )
+        if (entries.firstOrNull()?.source == CandidateEntrySource.CLIPBOARD) return entries
+        return listOf(clipboardEntry) + entries
+    }
+
+    private fun currentClipboardText(): String? {
+        val manager = clipboardManager ?: (getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.also {
+            clipboardManager = it
+        } ?: return null
+        val clip = manager.primaryClip ?: return null
+        if (clip.itemCount <= 0) return null
+        val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return null
+        return text.takeIf { it.isNotBlank() }
+    }
+
+    private fun registerClipboardListener() {
+        val manager = clipboardManager ?: (getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.also {
+            clipboardManager = it
+        } ?: return
+        manager.removePrimaryClipChangedListener(clipboardChangeListener)
+        manager.addPrimaryClipChangedListener(clipboardChangeListener)
+    }
+
+    private fun consumeClipboardSuggestion() {
+        val text = currentClipboardText() ?: return
+        dismissedClipboardText = text
+    }
+
+    private fun commitClipboardCandidate(entry: CandidateEntry) {
+        dismissedClipboardText = entry.commitText
+        currentInputConnection.commitText(entry.commitText, 1)
+        clearTextEngineState()
     }
 
     private fun updateComposeView() {
@@ -1094,12 +1182,26 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun selectExpandedCandidate(pageIndex: Int, pageLocalIndex: Int) {
+        if (pageIndex == 0) {
+            val view = candidateView
+            val entry = view?.getCurrentPageCandidateEntry(pageLocalIndex)
+            if (entry?.source == CandidateEntrySource.CLIPBOARD) {
+                commitClipboardCandidate(entry)
+                return
+            }
+        }
         if (!::engineRunner.isInitialized) {
             showRimeInitializingIfNeeded()
             return
         }
+        val targetLocalIndex = if (pageIndex == 0) {
+            candidateView?.rimeCurrentPageCandidateIndexFor(pageLocalIndex) ?: -1
+        } else {
+            pageLocalIndex
+        }
+        if (targetLocalIndex < 0) return
         moveToExpandedCandidatePage(pageIndex) {
-            engineRunner.selectCandidate(pageLocalIndex) { engineResult ->
+            engineRunner.selectCandidate(targetLocalIndex) { engineResult ->
                 applyMoqiResult(engineResult.result)
             }
         }
@@ -1321,6 +1423,7 @@ class MoqiInputMethodService : InputMethodService() {
         if (::engineRunner.isInitialized) {
             engineRunner.close()
         }
+        clipboardManager?.removePrimaryClipChangedListener(clipboardChangeListener)
         downloadExecutor.shutdown()
         keyboardView = null
         keyboardMenuView = null

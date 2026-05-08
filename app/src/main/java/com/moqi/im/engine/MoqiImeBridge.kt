@@ -22,8 +22,15 @@ data class RimeMenuEntry(
 
 data class CandidateEntry(
     val text: String,
-    val comment: String
+    val comment: String,
+    val source: CandidateEntrySource = CandidateEntrySource.RIME,
+    val commitText: String = text
 )
+
+enum class CandidateEntrySource {
+    RIME,
+    CLIPBOARD
+}
 
 data class MoqiImeResult(
     val success: Boolean,
