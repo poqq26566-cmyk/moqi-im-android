@@ -10,6 +10,9 @@ import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
+import android.widget.OverScroller
 import com.moqi.im.R
 
 class KeyboardView @JvmOverloads constructor(
@@ -34,8 +37,8 @@ class KeyboardView @JvmOverloads constructor(
     private var currentLayout: Layout = Layout.QWERTY_CN
     private var currentSymbolPage: SymbolPage = SymbolPage.COMMON
     private var t9PinyinOptions: List<String> = emptyList()
-    private var t9PinyinOptionOffset: Int = 0
     private var t9SidePanelRect = RectF()
+    private var t9SidePanelScrollOffset: Float = 0f
 
     private var rows: List<List<KeyDefinition>> = emptyList()
     private var keyRects: List<List<RectF>> = emptyList()
@@ -46,11 +49,13 @@ class KeyboardView @JvmOverloads constructor(
     private var touchStartX: Float = 0f
     private var touchStartY: Float = 0f
     private var lastSidePanelY: Float = 0f
-    private var sidePanelScrollRemainder: Float = 0f
     private var swipeTriggered: Boolean = false
     private var t9PinyinScrollTriggered: Boolean = false
     private var spaceLongPressRunnable: Runnable? = null
     private var spaceLongPressTriggered: Boolean = false
+    private val viewConfiguration = ViewConfiguration.get(context)
+    private val sidePanelScroller = OverScroller(context)
+    private var sidePanelVelocityTracker: VelocityTracker? = null
 
     private var shiftState: ShiftState = ShiftState.LOWER
     private var onKeyListener: ((Int, Boolean, String?) -> Unit)? = null
@@ -110,11 +115,14 @@ class KeyboardView @JvmOverloads constructor(
         currentLayout == Layout.NUMBER || currentLayout == Layout.SYMBOL
 
     fun setT9PinyinOptions(options: List<String>) {
+        if (options != t9PinyinOptions) {
+            t9SidePanelScrollOffset = 0f
+            if (!sidePanelScroller.isFinished) {
+                sidePanelScroller.abortAnimation()
+            }
+        }
         t9PinyinOptions = options
-        t9PinyinOptionOffset = t9PinyinOptionOffset.coerceIn(
-            0,
-            maxOf(0, t9SideItems().size - T9_VISIBLE_SIDE_ITEMS)
-        )
+        clampT9SidePanelScroll()
         if (isT9Layout()) {
             rows = when (currentLayout) {
                 Layout.T9_EN -> t9EnRows()
@@ -159,24 +167,29 @@ class KeyboardView @JvmOverloads constructor(
         if (!isT9Layout() || t9SidePanelRect.isEmpty) return
         val dark = isDarkMode
         val items = t9SideItems()
-        val visibleItems = items.drop(t9PinyinOptionOffset).take(T9_VISIBLE_SIDE_ITEMS)
         val cornerRadius = dp(8f)
         keyPaint.color = if (dark) 0xFF2A2A42.toInt() else 0xFFFFFFFF.toInt()
         canvas.drawRoundRect(t9SidePanelRect, cornerRadius, cornerRadius, keyPaint)
 
         val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
         val baselineOffset = -(labelPaint.descent() + labelPaint.ascent()) / 2f
-        visibleItems.forEachIndexed { index, key ->
-            val centerY = t9SidePanelRect.top + itemHeight * index + itemHeight / 2f
+        canvas.save()
+        canvas.clipRect(t9SidePanelRect)
+        items.forEachIndexed { index, key ->
+            val centerY = t9SidePanelRect.top + itemHeight * index + itemHeight / 2f - t9SidePanelScrollOffset
+            if (centerY + itemHeight / 2f < t9SidePanelRect.top || centerY - itemHeight / 2f > t9SidePanelRect.bottom) {
+                return@forEachIndexed
+            }
             canvas.drawText(key.label, t9SidePanelRect.centerX(), centerY + baselineOffset, labelPaint)
         }
+        canvas.restore()
         if (items.size > T9_VISIBLE_SIDE_ITEMS) {
             val trackLeft = t9SidePanelRect.right - dp(4f)
             val trackTop = t9SidePanelRect.top + dp(8f)
             val trackBottom = t9SidePanelRect.bottom - dp(8f)
-            val maxOffset = (items.size - T9_VISIBLE_SIDE_ITEMS).coerceAtLeast(1)
-            val thumbHeight = ((trackBottom - trackTop) * T9_VISIBLE_SIDE_ITEMS / items.size).coerceAtLeast(dp(18f))
-            val thumbTop = trackTop + (trackBottom - trackTop - thumbHeight) * t9PinyinOptionOffset / maxOffset
+            val maxScroll = maxT9SidePanelScroll().coerceAtLeast(1f)
+            val thumbHeight = ((trackBottom - trackTop) * t9SidePanelRect.height() / (items.size * itemHeight)).coerceAtLeast(dp(18f))
+            val thumbTop = trackTop + (trackBottom - trackTop - thumbHeight) * t9SidePanelScrollOffset / maxScroll
             iconPaint.color = if (dark) 0xFF4A5158.toInt() else 0xFFD0D5DC.toInt()
             canvas.drawRoundRect(
                 RectF(trackLeft, thumbTop, trackLeft + dp(2.5f), thumbTop + thumbHeight),
@@ -283,26 +296,42 @@ class KeyboardView @JvmOverloads constructor(
         // Voice layout is now rendered as keys, not custom drawing
     }
 
+    override fun computeScroll() {
+        if (sidePanelScroller.computeScrollOffset()) {
+            t9SidePanelScrollOffset = sidePanelScroller.currY.toFloat().coerceIn(0f, maxT9SidePanelScroll())
+            postInvalidateOnAnimation()
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        val sidePanelStarted = touchStartKey?.let { isT9SidePanelCell(it.first, it.second) } == true
+        if (sidePanelStarted) {
+            ensureSidePanelVelocityTracker().addMovement(event)
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (!sidePanelScroller.isFinished) {
+                    sidePanelScroller.abortAnimation()
+                }
                 val hit = findKeyAt(event.x, event.y)
                 touchStartKey = hit
                 touchStartX = event.x
                 touchStartY = event.y
                 lastSidePanelY = event.y
-                sidePanelScrollRemainder = 0f
                 swipeTriggered = false
                 t9PinyinScrollTriggered = false
                 pressedKey = hit
+                if (hit?.let { isT9SidePanelCell(it.first, it.second) } == true) {
+                    ensureSidePanelVelocityTracker().addMovement(event)
+                }
                 startKeyRepeatIfNeeded(hit)
                 startSpaceLongPressIfNeeded(hit)
-                invalidate()
+                postInvalidateOnAnimation()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (handleT9PinyinOptionScroll(event.x, event.y)) {
-                    invalidate()
+                    postInvalidateOnAnimation()
                     return true
                 }
                 if (updateSwipeState(event.x, event.y)) {
@@ -335,19 +364,27 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
                 stopSpaceLongPress(endVoice = spaceLongPressWasActive)
+                if (t9PinyinScrollTriggered) {
+                    flingT9SidePanelIfNeeded()
+                }
+                recycleSidePanelVelocityTracker()
                 clearTouchTracking()
                 stopKeyRepeat()
                 pressedKey = null
-                invalidate()
+                postInvalidateOnAnimation()
                 performClick()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
                 stopSpaceLongPress(endVoice = spaceLongPressTriggered)
+                if (!sidePanelScroller.isFinished) {
+                    sidePanelScroller.abortAnimation()
+                }
+                recycleSidePanelVelocityTracker()
                 clearTouchTracking()
                 stopKeyRepeat()
                 pressedKey = null
-                invalidate()
+                postInvalidateOnAnimation()
                 return true
             }
         }
@@ -387,33 +424,59 @@ class KeyboardView @JvmOverloads constructor(
         if (!isT9SidePanelCell(startKey.first, startKey.second)) return false
         val dx = x - touchStartX
         val dy = y - touchStartY
-        if (kotlin.math.abs(dy) <= swipeThresholdPx() || kotlin.math.abs(dy) <= kotlin.math.abs(dx)) {
+        if (kotlin.math.abs(dy) < 1f || kotlin.math.abs(dy) < kotlin.math.abs(dx)) {
             return false
         }
-        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
-        sidePanelScrollRemainder += lastSidePanelY - y
+        val nextOffset = (t9SidePanelScrollOffset + lastSidePanelY - y).coerceIn(0f, maxT9SidePanelScroll())
         lastSidePanelY = y
-        val steps = (sidePanelScrollRemainder / itemHeight).toInt()
-        if (steps != 0) {
-            val newOffset = (t9PinyinOptionOffset + steps).coerceIn(
-                0,
-                (items.size - T9_VISIBLE_SIDE_ITEMS).coerceAtLeast(0)
-            )
-            sidePanelScrollRemainder -= steps * itemHeight
-            if (newOffset != t9PinyinOptionOffset) {
-                t9PinyinOptionOffset = newOffset
-                rows = when (currentLayout) {
-                    Layout.T9_EN -> t9EnRows()
-                    else -> t9CnRows()
-                }
-                requestLayout()
-            }
-        }
+        t9SidePanelScrollOffset = nextOffset
         t9PinyinScrollTriggered = true
         pressedKey = startKey
         stopKeyRepeat()
         stopSpaceLongPress(endVoice = spaceLongPressTriggered)
         return true
+    }
+
+    private fun ensureSidePanelVelocityTracker(): VelocityTracker {
+        val tracker = sidePanelVelocityTracker ?: VelocityTracker.obtain().also {
+            sidePanelVelocityTracker = it
+        }
+        return tracker
+    }
+
+    private fun recycleSidePanelVelocityTracker() {
+        sidePanelVelocityTracker?.recycle()
+        sidePanelVelocityTracker = null
+    }
+
+    private fun flingT9SidePanelIfNeeded() {
+        val maxScroll = maxT9SidePanelScroll().toInt()
+        if (maxScroll <= 0) return
+        val tracker = sidePanelVelocityTracker ?: return
+        tracker.computeCurrentVelocity(1000, viewConfiguration.scaledMaximumFlingVelocity.toFloat())
+        val velocityY = -tracker.yVelocity.toInt()
+        if (kotlin.math.abs(velocityY) < viewConfiguration.scaledMinimumFlingVelocity) return
+        sidePanelScroller.fling(
+            0,
+            t9SidePanelScrollOffset.toInt(),
+            0,
+            velocityY,
+            0,
+            0,
+            0,
+            maxScroll
+        )
+        postInvalidateOnAnimation()
+    }
+
+    private fun clampT9SidePanelScroll() {
+        t9SidePanelScrollOffset = t9SidePanelScrollOffset.coerceIn(0f, maxT9SidePanelScroll())
+    }
+
+    private fun maxT9SidePanelScroll(): Float {
+        if (t9SidePanelRect.isEmpty) return 0f
+        val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
+        return (t9SideItems().size * itemHeight - t9SidePanelRect.height()).coerceAtLeast(0f)
     }
 
     private fun isT9SidePanelCell(row: Int, col: Int): Boolean = isT9Layout() && col == 0 && row in 0..2
@@ -423,7 +486,6 @@ class KeyboardView @JvmOverloads constructor(
         touchStartX = 0f
         touchStartY = 0f
         lastSidePanelY = 0f
-        sidePanelScrollRemainder = 0f
         swipeTriggered = false
         t9PinyinScrollTriggered = false
     }
@@ -682,7 +744,7 @@ class KeyboardView @JvmOverloads constructor(
         KeyDefinition(label, keyCode, widthFactor, subLabel = digit.takeUnless { it == label }, swipeText = digit)
 
     private fun t9SideKey(index: Int, fallbackLabel: String, fallbackKeyCode: Int): KeyDefinition =
-        t9SideItems().getOrNull(t9PinyinOptionOffset + index) ?: KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
+        t9SideItems().getOrNull(index) ?: KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
 
     private fun t9SideItems(): List<KeyDefinition> {
         if (t9PinyinOptions.isNotEmpty()) {
@@ -698,8 +760,8 @@ class KeyboardView @JvmOverloads constructor(
     private fun t9SideItemAt(y: Float): KeyDefinition? {
         if (!isT9Layout() || !t9SidePanelRect.contains(t9SidePanelRect.centerX(), y)) return null
         val itemHeight = t9SidePanelRect.height() / T9_VISIBLE_SIDE_ITEMS
-        val index = ((y - t9SidePanelRect.top) / itemHeight).toInt()
-        return t9SideItems().getOrNull(t9PinyinOptionOffset + index)
+        val index = ((y - t9SidePanelRect.top + t9SidePanelScrollOffset) / itemHeight).toInt()
+        return t9SideItems().getOrNull(index)
     }
 
     private fun numberRows(): List<List<KeyDefinition>> = listOf(
