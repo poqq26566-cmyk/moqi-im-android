@@ -185,6 +185,10 @@ class MoqiInputMethodService : InputMethodService() {
             override fun onCommand(commandId: Int) {
                 engineRunner.command(commandId) { result ->
                     applyMoqiResult(result.result)
+                    val message = result.result.message.ifBlank { result.result.error }
+                    if (message.isNotBlank()) {
+                        showMessage(message)
+                    }
                     refreshMenuPanel()
                 }
             }

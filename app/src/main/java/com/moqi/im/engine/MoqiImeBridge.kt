@@ -33,6 +33,7 @@ data class MoqiImeResult(
     val candidates: List<String>,
     val candidateEntries: List<CandidateEntry>,
     val showCandidates: Boolean,
+    val message: String,
     val error: String
 )
 
@@ -246,6 +247,7 @@ class MoqiImeSession(
             candidates = emptyList(),
             candidateEntries = emptyList(),
             showCandidates = false,
+            message = "",
             error = initError.ifBlank { "moqi-ime session is not initialized" }
         )
     }
@@ -334,6 +336,7 @@ private fun MobileResponse?.toResult(): MoqiImeResult {
             candidates = emptyList(),
             candidateEntries = emptyList(),
             showCandidates = false,
+            message = "",
             error = "empty moqi-ime response"
         )
     }
@@ -352,6 +355,7 @@ private fun MobileResponse?.toResult(): MoqiImeResult {
         candidates = candidates,
         candidateEntries = displayEntries,
         showCandidates = showCandidates,
+        message = message.orEmpty(),
         error = error.orEmpty()
     )
 }
@@ -406,6 +410,7 @@ private fun Throwable.toResult(): MoqiImeResult {
         candidates = emptyList(),
         candidateEntries = emptyList(),
         showCandidates = false,
+        message = "",
         error = message.orEmpty().ifBlank { javaClass.simpleName }
     )
 }

@@ -226,6 +226,7 @@ class MoqiImeEngineRunner(
             candidates = emptyList(),
             candidateEntries = emptyList(),
             showCandidates = false,
+            message = "",
             error = "moqi-ime engine is not ready"
         )
     }
