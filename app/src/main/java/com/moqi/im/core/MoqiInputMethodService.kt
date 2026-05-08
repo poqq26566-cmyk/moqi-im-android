@@ -45,6 +45,7 @@ class MoqiInputMethodService : InputMethodService() {
         private const val TAG = "MoqiInputMethodService"
         private const val RIME_INIT_MESSAGE = "正在初始化 Rime…"
         private const val KEY_VIBRATION_MS = 12L
+        private const val INITIAL_EXPANDED_PREFETCH_PAGES = 5
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -851,7 +852,7 @@ class MoqiInputMethodService : InputMethodService() {
         if (expanded) {
             expandedCandidatePageIndex = 0
             isExpandedCandidateLoading = false
-            expandedCandidateInitialPrefetchRemaining = 2
+            expandedCandidateInitialPrefetchRemaining = INITIAL_EXPANDED_PREFETCH_PAGES
         } else {
             expandedCandidateInitialPrefetchRemaining = 0
         }

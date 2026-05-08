@@ -10,6 +10,8 @@ import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.VelocityTracker
+import android.widget.OverScroller
 import com.moqi.im.R
 import com.moqi.im.engine.CandidateEntry
 import kotlin.math.abs
@@ -52,7 +54,12 @@ class CandidateView @JvmOverloads constructor(
     private var lastX = 0f
     private var lastY = 0f
     private var isDragging = false
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val viewConfiguration = ViewConfiguration.get(context)
+    private val touchSlop = viewConfiguration.scaledTouchSlop
+    private val minimumFlingVelocity = viewConfiguration.scaledMinimumFlingVelocity
+    private val maximumFlingVelocity = viewConfiguration.scaledMaximumFlingVelocity
+    private val scroller = OverScroller(context)
+    private var velocityTracker: VelocityTracker? = null
 
     private var onCandidateSelected: ((String) -> Unit)? = null
     private var onCandidateIndexSelected: ((Int) -> Unit)? = null
@@ -145,31 +152,36 @@ class CandidateView @JvmOverloads constructor(
 
         canvas.save()
         canvas.clipRect(0f, 0f, moreButtonRect.left, height.toFloat())
+        val headerHeight = candidateBarHeight()
         if (!expanded) {
             canvas.translate(-scrollOffset, 0f)
         }
         for ((i, rect) in itemRects.withIndex()) {
             if (i >= candidates.size) break
             if (!expanded && (rect.right < scrollOffset || rect.left > scrollOffset + moreButtonRect.left)) continue
-            val drawRect = if (expanded) visualRect(rect) else rect
-            if (expanded && (drawRect.bottom < candidateBarHeight() || drawRect.top > height)) continue
+            val offsetY = if (expanded && rect.bottom > headerHeight) scrollOffset else 0f
+            val drawLeft = rect.left
+            val drawTop = rect.top - offsetY
+            val drawRight = rect.right
+            val drawBottom = rect.bottom - offsetY
+            if (expanded && (drawBottom < headerHeight || drawTop > height)) continue
 
             val candidate = candidates[i]
             val isSelected = i == pressedIndex
 
             canvas.save()
-            val clipTop = if (expanded && rect.top >= candidateBarHeight()) {
-                drawRect.top.coerceAtLeast(candidateBarHeight())
+            val clipTop = if (expanded && rect.top >= headerHeight) {
+                drawTop.coerceAtLeast(headerHeight)
             } else {
-                drawRect.top
+                drawTop
             }
-            canvas.clipRect(drawRect.left + dp(1f), clipTop, drawRect.right - dp(1f), drawRect.bottom)
+            canvas.clipRect(drawLeft + dp(1f), clipTop, drawRight - dp(1f), drawBottom)
             if (isSelected) {
-                canvas.drawRoundRect(drawRect, dp(6f), dp(6f), highlightPaint)
+                canvas.drawRoundRect(drawLeft, drawTop, drawRight, drawBottom, dp(6f), dp(6f), highlightPaint)
             }
 
-            val textX = drawRect.left + dp(12f)
-            val textBaseline = drawRect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
+            val textX = drawLeft + dp(12f)
+            val textBaseline = (drawTop + drawBottom) / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
             canvas.drawText(candidate.text, textX, textBaseline, textPaint)
             if (candidate.comment.isNotBlank()) {
                 val commentX = textX + textPaint.measureText(candidate.text) + dp(7f)
@@ -177,12 +189,12 @@ class CandidateView @JvmOverloads constructor(
             }
             canvas.restore()
             if (i < itemRects.lastIndex) {
-                val lineTop = if (expanded && rect.top >= candidateBarHeight()) {
-                    drawRect.top.coerceAtLeast(candidateBarHeight()) + dp(8f)
+                val lineTop = if (expanded && rect.top >= headerHeight) {
+                    drawTop.coerceAtLeast(headerHeight) + dp(8f)
                 } else {
-                    drawRect.top + dp(8f)
+                    drawTop + dp(8f)
                 }
-                canvas.drawLine(drawRect.right, lineTop, drawRect.right, drawRect.bottom - dp(8f), dividerPaint)
+                canvas.drawLine(drawRight, lineTop, drawRight, drawBottom - dp(8f), dividerPaint)
             }
         }
         canvas.restore()
@@ -224,9 +236,25 @@ class CandidateView @JvmOverloads constructor(
         invalidate()
     }
 
+    override fun computeScroll() {
+        if (scroller.computeScrollOffset()) {
+            val nextOffset = scroller.currY.toFloat().coerceIn(0f, maxScrollOffset)
+            val dy = nextOffset - scrollOffset
+            scrollOffset = nextOffset
+            requestPageChangeAtExpandedEdge(dy)
+            postInvalidateOnAnimation()
+        }
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (expanded) {
+            ensureVelocityTracker().addMovement(event)
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (!scroller.isFinished) {
+                    scroller.abortAnimation()
+                }
                 downX = event.x
                 downY = event.y
                 lastX = event.x
@@ -257,7 +285,7 @@ class CandidateView @JvmOverloads constructor(
                     if (isDragging) {
                         scrollOffset = (scrollOffset + dy).coerceIn(0f, maxScrollOffset)
                         requestPageChangeAtExpandedEdge(dy)
-                        invalidate()
+                        postInvalidateOnAnimation()
                     }
                     lastY = event.y
                     return true
@@ -269,7 +297,7 @@ class CandidateView @JvmOverloads constructor(
                 }
                 if (isDragging) {
                     scrollOffset = (scrollOffset + dx).coerceIn(0f, maxScrollOffset)
-                    invalidate()
+                    postInvalidateOnAnimation()
                 }
                 lastX = event.x
                 return true
@@ -288,6 +316,7 @@ class CandidateView @JvmOverloads constructor(
                     }
                     moreButtonPressed = false
                     pressedControl = -1
+                    recycleVelocityTracker()
                     invalidate()
                     return true
                 }
@@ -303,17 +332,25 @@ class CandidateView @JvmOverloads constructor(
                         onCandidateSelected?.invoke(candidates[idx].text)
                     }
                 }
+                if (expanded && isDragging) {
+                    flingIfNeeded()
+                }
                 pressedIndex = -1
                 isDragging = false
+                recycleVelocityTracker()
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                if (!scroller.isFinished) {
+                    scroller.abortAnimation()
+                }
                 pressedIndex = -1
                 pressedControl = -1
                 moreButtonPressed = false
                 pageChangeRequested = false
                 isDragging = false
+                recycleVelocityTracker()
                 invalidate()
                 return true
             }
@@ -467,8 +504,8 @@ class CandidateView @JvmOverloads constructor(
 
     private fun requestPageChangeAtExpandedEdge(dy: Float) {
         if (!expanded || pageChangeRequested) return
-        val threshold = dp(1f)
-        if (dy > 0f && scrollOffset >= maxScrollOffset - threshold) {
+        val preloadDistance = height * 1.5f
+        if (dy > 0f && maxScrollOffset - scrollOffset <= preloadDistance) {
             pageChangeRequested = true
             onExpandedLoadNextPage?.invoke()
         }
@@ -476,13 +513,43 @@ class CandidateView @JvmOverloads constructor(
 
     private fun scrollExpandedPage(forward: Boolean) {
         if (!expanded) return
+        if (!scroller.isFinished) {
+            scroller.abortAnimation()
+        }
         val viewport = height.toFloat().coerceAtLeast(1f)
         val delta = viewport * 0.85f * if (forward) 1f else -1f
         scrollOffset = (scrollOffset + delta).coerceIn(0f, maxScrollOffset)
         if (forward && scrollOffset >= maxScrollOffset - dp(1f)) {
             requestPageChangeAtExpandedEdge(1f)
         }
-        invalidate()
+        postInvalidateOnAnimation()
+    }
+
+    private fun ensureVelocityTracker(): VelocityTracker {
+        return velocityTracker ?: VelocityTracker.obtain().also { velocityTracker = it }
+    }
+
+    private fun recycleVelocityTracker() {
+        velocityTracker?.recycle()
+        velocityTracker = null
+    }
+
+    private fun flingIfNeeded() {
+        val tracker = velocityTracker ?: return
+        tracker.computeCurrentVelocity(1000, maximumFlingVelocity.toFloat())
+        val velocityY = tracker.yVelocity
+        if (abs(velocityY) < minimumFlingVelocity || maxScrollOffset <= 0f) return
+        scroller.fling(
+            0,
+            scrollOffset.toInt(),
+            0,
+            -velocityY.toInt(),
+            0,
+            0,
+            0,
+            maxScrollOffset.toInt()
+        )
+        postInvalidateOnAnimation()
     }
 
     private fun findItemAt(x: Float, y: Float): Int {
@@ -505,11 +572,6 @@ class CandidateView @JvmOverloads constructor(
     private fun touchContentY(y: Float): Float {
         if (!expanded) return y
         return if (y <= candidateBarHeight()) y else y + scrollOffset
-    }
-
-    private fun visualRect(rect: RectF): RectF {
-        if (!expanded || rect.bottom <= candidateBarHeight()) return rect
-        return RectF(rect.left, rect.top - scrollOffset, rect.right, rect.bottom - scrollOffset)
     }
 
     private fun candidateBarHeight(): Float = resources.getDimension(R.dimen.candidate_height)
