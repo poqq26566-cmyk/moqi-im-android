@@ -94,5 +94,8 @@ object T9Pinyin {
     fun digitsFor(pinyin: String): String =
         pinyin.mapNotNull { digitByChar[it] }.joinToString("")
 
+    fun engineInputForDigits(digits: String): String =
+        digits.replace('1', '\'')
+
     fun defaultPinyinFor(digits: String): String = optionsFor(digits, limit = 1).firstOrNull() ?: digits
 }

@@ -52,6 +52,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation(files("libs/sherpa-onnx-1.13.0.aar"))
     implementation(files("libs/moqi-ime.aar"))
+    testImplementation("junit:junit:4.13.2")
 }
 
 // 应用模型下载脚本（可选：构建时自动下载模型）

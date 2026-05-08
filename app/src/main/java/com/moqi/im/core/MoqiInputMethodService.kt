@@ -462,7 +462,14 @@ class MoqiInputMethodService : InputMethodService() {
         t9InferredPinyinBySegment.keys
             .filter { it >= t9Segments().size }
             .forEach { t9InferredPinyinBySegment.remove(it) }
+        if (digit == '1') {
+            t9InferredPinyinBySegment.clear()
+        }
         updateT9PinyinOptions()
+        if (t9PinyinDigits.contains('1')) {
+            replayT9DigitComposition()
+            return
+        }
         val engineChar = if (digit == '1') '\'' else digit
         submitMoqiKey(engineChar.code, engineChar.code) {
             if (currentMode == InputMode.ENGLISH) {
@@ -481,7 +488,20 @@ class MoqiInputMethodService : InputMethodService() {
         val updatedSegments = t9Segments()
         t9ActiveSegmentIndex = (segmentIndex + 1).coerceAtMost(updatedSegments.lastIndex)
         updateT9PinyinOptions()
+        replayT9DisplayComposition()
+    }
+
+    private fun replayT9DisplayComposition() {
         val replayText = t9DisplayComposition()
+        replayTextToEngine(replayText)
+    }
+
+    private fun replayT9DigitComposition() {
+        val replayText = T9Pinyin.engineInputForDigits(t9PinyinDigits.toString())
+        replayTextToEngine(replayText)
+    }
+
+    private fun replayTextToEngine(replayText: String) {
         engineRunner.resetComposition {
             composingText.clear()
             candidateView?.setCandidates(emptyList())
@@ -816,6 +836,7 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun updateT9InferredPinyin(entries: List<CandidateEntry>) {
         if (!isT9Mode || currentMode != InputMode.PINYIN || t9PinyinDigits.isEmpty()) return
+        if (t9PinyinDigits.contains('1')) return
         val segments = t9Segments()
         val inferred = entries.firstOrNull()
             ?.comment
