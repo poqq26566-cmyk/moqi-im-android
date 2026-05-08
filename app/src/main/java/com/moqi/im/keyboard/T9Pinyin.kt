@@ -38,12 +38,26 @@ object T9Pinyin {
         'w' to '9', 'x' to '9', 'y' to '9', 'z' to '9'
     )
 
+    private val lettersByDigit = mapOf(
+        '2' to listOf("a", "b", "c"),
+        '3' to listOf("d", "e", "f"),
+        '4' to listOf("g", "h", "i"),
+        '5' to listOf("j", "k", "l"),
+        '6' to listOf("m", "n", "o"),
+        '7' to listOf("p", "q", "r", "s"),
+        '8' to listOf("t", "u", "v"),
+        '9' to listOf("w", "x", "y", "z")
+    )
+
     private val pinyinByDigits: Map<String, List<String>> = syllables
         .groupBy { syllable -> syllable.mapNotNull { digitByChar[it] }.joinToString("") }
 
     fun optionsFor(digits: String, limit: Int = 20): List<String> {
         if (digits.isBlank()) return emptyList()
         val options = mutableListOf<String>()
+        if (digits.length == 1) {
+            options += lettersByDigit[digits.first()].orEmpty()
+        }
         for (length in digits.length downTo 1) {
             options += pinyinByDigits[digits.take(length)].orEmpty()
         }
@@ -76,6 +90,9 @@ object T9Pinyin {
         }
         return segments
     }
+
+    fun digitsFor(pinyin: String): String =
+        pinyin.mapNotNull { digitByChar[it] }.joinToString("")
 
     fun defaultPinyinFor(digits: String): String = optionsFor(digits, limit = 1).firstOrNull() ?: digits
 }

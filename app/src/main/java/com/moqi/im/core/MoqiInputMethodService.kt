@@ -476,8 +476,10 @@ class MoqiInputMethodService : InputMethodService() {
         val segments = t9Segments()
         if (segments.isEmpty()) return
         val segmentIndex = t9ActiveSegmentIndex.coerceIn(0, segments.lastIndex)
+        splitT9SegmentForSelectedPinyin(segmentIndex, pinyin, segments)
         t9SelectedPinyinBySegment[segmentIndex] = pinyin
-        t9ActiveSegmentIndex = (segmentIndex + 1).coerceAtMost(segments.lastIndex)
+        val updatedSegments = t9Segments()
+        t9ActiveSegmentIndex = (segmentIndex + 1).coerceAtMost(updatedSegments.lastIndex)
         updateT9PinyinOptions()
         val replayText = t9DisplayComposition()
         engineRunner.resetComposition {
@@ -487,6 +489,33 @@ class MoqiInputMethodService : InputMethodService() {
                 submitMoqiKey(ch.code, ch.code)
             }
         }
+    }
+
+    private fun splitT9SegmentForSelectedPinyin(segmentIndex: Int, pinyin: String, segments: List<String>) {
+        val selectedDigits = T9Pinyin.digitsFor(pinyin)
+        val segmentDigits = segments.getOrNull(segmentIndex) ?: return
+        if (selectedDigits.isBlank() ||
+            selectedDigits.length >= segmentDigits.length ||
+            !segmentDigits.startsWith(selectedDigits)
+        ) {
+            return
+        }
+
+        val updatedSegments = segments.toMutableList()
+        updatedSegments[segmentIndex] = selectedDigits
+        updatedSegments.add(segmentIndex + 1, segmentDigits.drop(selectedDigits.length))
+        t9PinyinDigits.clear()
+        t9PinyinDigits.append(updatedSegments.joinToString("1"))
+
+        val oldSelected = t9SelectedPinyinBySegment.toMap()
+        t9SelectedPinyinBySegment.clear()
+        oldSelected.forEach { (index, selected) ->
+            when {
+                index < segmentIndex -> t9SelectedPinyinBySegment[index] = selected
+                index > segmentIndex -> t9SelectedPinyinBySegment[index + 1] = selected
+            }
+        }
+        t9InferredPinyinBySegment.clear()
     }
 
     private fun updateT9PinyinOptions() {
