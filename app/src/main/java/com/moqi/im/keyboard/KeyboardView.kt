@@ -321,7 +321,7 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
-    private fun isQwertyLayout(): Boolean =
+    fun isQwertyLayout(): Boolean =
         currentLayout == Layout.QWERTY_CN || currentLayout == Layout.QWERTY_EN
 
     /** 26 键 / 9 键字母区：主字 + 下方数字或符号时的纵向间距（与 [QWERTY_DUAL_LINE_*] 一致）。 */
@@ -886,7 +886,8 @@ class KeyboardView @JvmOverloads constructor(
             KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
             KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
             KeyDefinition(spaceBarLabel("空格"), KeyCode.SPACE, 2.08f),
-            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f)
+            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f),
+            KeyDefinition("↵", KeyCode.ENTER, 0.66f)
         )
     )
 
@@ -916,7 +917,8 @@ class KeyboardView @JvmOverloads constructor(
             KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
             KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
             KeyDefinition(spaceBarLabel("Space"), KeyCode.SPACE, 2.08f),
-            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f)
+            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f),
+            KeyDefinition("↵", KeyCode.ENTER, 0.66f)
         )
     )
 
@@ -1139,7 +1141,8 @@ class KeyboardView @JvmOverloads constructor(
         KeyDefinition("，", KeyCode.COMMA, 1f),
         KeyDefinition(spaceBarLabel("空格"), KeyCode.SPACE, 5.1f),
         KeyDefinition("。", KeyCode.PERIOD, 1f),
-        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f)
+        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f),
+        KeyDefinition("↵", KeyCode.ENTER, 1.3f)
     )
 
     private fun bottomRowEn(): List<KeyDefinition> = listOf(
@@ -1148,7 +1151,8 @@ class KeyboardView @JvmOverloads constructor(
         KeyDefinition(",", KeyCode.COMMA, 1f),
         KeyDefinition(spaceBarLabel("Space"), KeyCode.SPACE, 5.1f),
         KeyDefinition(".", KeyCode.PERIOD, 1f),
-        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f)
+        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f),
+        KeyDefinition("↵", KeyCode.ENTER, 1.3f)
     )
 
     private fun charToKeyCode(ch: Char): Int = when (ch) {
