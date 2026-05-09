@@ -883,11 +883,10 @@ class KeyboardView @JvmOverloads constructor(
             t9Key("0", KeyCode.T9_0, "0", 0.72f)
         ),
         listOf(
-            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f),
+            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
             KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
             KeyDefinition(spaceBarLabel("空格"), KeyCode.SPACE, 2.08f),
-            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
-            KeyDefinition("↵", KeyCode.ENTER, 0.66f)
+            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f)
         )
     )
 
@@ -914,11 +913,10 @@ class KeyboardView @JvmOverloads constructor(
             t9Key("0", KeyCode.T9_0, "0", 0.72f)
         ),
         listOf(
-            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f),
+            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
             KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 0.66f),
             KeyDefinition(spaceBarLabel("Space"), KeyCode.SPACE, 2.08f),
-            KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
-            KeyDefinition("↵", KeyCode.ENTER, 0.66f)
+            KeyDefinition("中/英", KeyCode.MODE_SWITCH, 0.82f)
         )
     )
 
@@ -1136,23 +1134,21 @@ class KeyboardView @JvmOverloads constructor(
     )
 
     private fun bottomRowCn(): List<KeyDefinition> = listOf(
-        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f),
+        KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
+        KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
         KeyDefinition("，", KeyCode.COMMA, 1f),
         KeyDefinition(spaceBarLabel("空格"), KeyCode.SPACE, 5.1f),
         KeyDefinition("。", KeyCode.PERIOD, 1f),
-        KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
-        KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
-        KeyDefinition("↵", KeyCode.ENTER, 1.3f)
+        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f)
     )
 
     private fun bottomRowEn(): List<KeyDefinition> = listOf(
-        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f),
+        KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
+        KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
         KeyDefinition(",", KeyCode.COMMA, 1f),
         KeyDefinition(spaceBarLabel("Space"), KeyCode.SPACE, 5.1f),
         KeyDefinition(".", KeyCode.PERIOD, 1f),
-        KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f),
-        KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f),
-        KeyDefinition("↵", KeyCode.ENTER, 1.3f)
+        KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f)
     )
 
     private fun charToKeyCode(ch: Char): Int = when (ch) {
