@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -131,6 +132,9 @@ class MoqiInputMethodService : InputMethodService() {
     private val downloadExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val powerManager: PowerManager by lazy {
         getSystemService(POWER_SERVICE) as PowerManager
+    }
+    private val audioManager: AudioManager by lazy {
+        getSystemService(AUDIO_SERVICE) as AudioManager
     }
     private val vibrator: Vibrator? by lazy {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -313,7 +317,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun handleKey(keyCode: Int, isShifted: Boolean) {
-        performKeyVibration()
+        performKeyFeedback(keyCode)
         when (keyCode) {
             KeyCode.DELETE -> handleBackspace()
             KeyCode.ENTER -> handleEnter()
@@ -378,7 +382,7 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun handleSwipeText(text: String) {
         if (text.isBlank()) return
-        performKeyVibration()
+        performKeyFeedback()
         val normalizedText = normalizeSwipeTextForMode(text)
         if (keyboardView?.isDirectCommitLayout() == true) {
             commitText(normalizedText)
@@ -683,7 +687,7 @@ class MoqiInputMethodService : InputMethodService() {
     private fun startSpaceVoiceHold() {
         if (!BuildConfig.VOICE_INPUT_ENABLED) return
         if (isListening) return
-        performKeyVibration()
+        performKeyFeedback(KeyCode.SPACE)
         modeBeforeVoice = if (currentMode == InputMode.VOICE) modeBeforeVoice else currentMode
         isSpaceVoiceHoldActive = true
         startVoiceListening()
@@ -1082,6 +1086,29 @@ class MoqiInputMethodService : InputMethodService() {
         if (composeView == null || composingText.isNotEmpty()) return
         composeView?.setComposingText("")
     }
+
+    private fun performKeyFeedback(keyCode: Int? = null) {
+        if (isKeySoundEnabled()) {
+            audioManager.playSoundEffect(soundEffectForKey(keyCode))
+        }
+        if (isKeyVibrationEnabled()) {
+            performKeyVibration()
+        }
+    }
+
+    private fun isKeySoundEnabled(): Boolean =
+        getSharedPreferences("moqi_im_prefs", MODE_PRIVATE).getBoolean("key_sound", true)
+
+    private fun isKeyVibrationEnabled(): Boolean =
+        getSharedPreferences("moqi_im_prefs", MODE_PRIVATE).getBoolean("key_vibrate", true)
+
+    private fun soundEffectForKey(keyCode: Int?): Int =
+        when (keyCode) {
+            KeyCode.DELETE -> AudioManager.FX_KEYPRESS_DELETE
+            KeyCode.ENTER -> AudioManager.FX_KEYPRESS_RETURN
+            KeyCode.SPACE -> AudioManager.FX_KEYPRESS_SPACEBAR
+            else -> AudioManager.FX_KEYPRESS_STANDARD
+        }
 
     @SuppressLint("MissingPermission")
     private fun performKeyVibration() {

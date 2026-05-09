@@ -19,6 +19,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
     private var executor: ExecutorService? = null
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
+        preferenceManager.sharedPreferencesName = "moqi_im_prefs"
         setPreferencesFromResource(R.xml.preferences, rootKey)
         executor = Executors.newSingleThreadExecutor()
 
