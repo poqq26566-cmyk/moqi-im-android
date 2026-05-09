@@ -484,8 +484,14 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.T9_9 -> '9'
             else -> return
         }
-        if (digit == '1' && (t9PinyinDigits.isEmpty() || t9PinyinDigits.last() == '1')) {
-            return
+        if (digit == '1') {
+            if (t9PinyinDigits.isEmpty()) {
+                commitText("1")
+                return
+            }
+            if (t9PinyinDigits.last() == '1') {
+                return
+            }
         }
         val previousWasSeparator = t9PinyinDigits.lastOrNull() == '1'
         t9PinyinDigits.append(digit)

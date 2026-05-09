@@ -307,7 +307,7 @@ class KeyboardView @JvmOverloads constructor(
         val textBaseline = if (key.swipeText.isNullOrBlank() || isSpecialKey(key)) {
             rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f
         } else {
-            val extraUp = if (isQwertyLayout()) dp(QWERTY_DUAL_LINE_PRIMARY_UP_DP) else 0f
+            val extraUp = if (usesLetterDigitDualLineSpacing()) dp(QWERTY_DUAL_LINE_PRIMARY_UP_DP) else 0f
             rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2f - rect.height() * 0.08f - dp(1f) - extraUp
         }
         canvas.drawText(text, rect.centerX(), textBaseline, textPaint)
@@ -315,7 +315,7 @@ class KeyboardView @JvmOverloads constructor(
         val subLabel = key.subLabel
         if (subLabel != null && !isSpecialKey(key)) {
             subLabelPaint.color = if (dark) 0xFF9090AA.toInt() else 0xFF606080.toInt()
-            val subBottomInsetDp = if (isQwertyLayout()) QWERTY_DUAL_LINE_SUB_BOTTOM_INSET_DP else 7f
+            val subBottomInsetDp = if (usesLetterDigitDualLineSpacing()) QWERTY_DUAL_LINE_SUB_BOTTOM_INSET_DP else 7f
             val subBaseline = rect.bottom - dp(subBottomInsetDp)
             canvas.drawText(subLabel, rect.centerX(), subBaseline, subLabelPaint)
         }
@@ -323,6 +323,10 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun isQwertyLayout(): Boolean =
         currentLayout == Layout.QWERTY_CN || currentLayout == Layout.QWERTY_EN
+
+    /** 26 键 / 9 键字母区：主字 + 下方数字或符号时的纵向间距（与 [QWERTY_DUAL_LINE_*] 一致）。 */
+    private fun usesLetterDigitDualLineSpacing(): Boolean =
+        isQwertyLayout() || isT9Layout()
 
     /** 26 键与 9 键底行「中/英」使用同一套主次字色与字号。 */
     private fun usesStyledModeSwitchKey(): Boolean =
@@ -758,9 +762,9 @@ class KeyboardView @JvmOverloads constructor(
         private const val MODE_SWITCH_INACTIVE_TEXT_SP = 12f
         private const val MODE_SWITCH_SLASH_TEXT_SP = 11f
         private const val MODE_SWITCH_INNER_GAP_DP = 1.5f
-        /** 26 键主字母再上移的 dp；副字距底边用 [QWERTY_DUAL_LINE_SUB_BOTTOM_INSET_DP]，与小写字 descender 拉开间距。 */
+        /** 26 键 / 9 键：主字母再上移的 dp；副字距底边用 [QWERTY_DUAL_LINE_SUB_BOTTOM_INSET_DP]。 */
         private const val QWERTY_DUAL_LINE_PRIMARY_UP_DP = 4f
-        /** 26 键副字距键帽底边（全局默认 7dp；越小副字越靠下）。 */
+        /** 26 键 / 9 键副字距键帽底边（其它布局默认 7dp；越小副字越靠下）。 */
         private const val QWERTY_DUAL_LINE_SUB_BOTTOM_INSET_DP = 3f
         /** Shift 轮廓略细于早期 2.2dp，减轻「粗黑」感。 */
         private const val SHIFT_ARROW_STROKE_DP = 1.55f
@@ -859,7 +863,7 @@ class KeyboardView @JvmOverloads constructor(
     private fun t9CnRows(): List<List<KeyDefinition>> = listOf(
         listOf(
             t9SideKey(0, "，", KeyCode.COMMA),
-            t9Key("1", KeyCode.T9_1, "1"),
+            t9Key("分词", KeyCode.T9_1, "1"),
             t9Key("ABC", KeyCode.T9_2, "2"),
             t9Key("DEF", KeyCode.T9_3, "3"),
             KeyDefinition("⌫", KeyCode.DELETE, 0.72f, isRepeatable = true)
