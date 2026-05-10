@@ -35,6 +35,9 @@ class KeyboardView @JvmOverloads constructor(
     private val specialKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val sidePanelTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val popupPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val popupSelectedPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val popupTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     /** 与 iconPaint 分离，避免 Shift 使用 STROKE 后状态影响其它绘制（部分机型上出现字母异常竖线）。 */
     private val shiftIconPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var keyWidth: Float = 0f
@@ -61,6 +64,11 @@ class KeyboardView @JvmOverloads constructor(
     private var t9PinyinScrollTriggered: Boolean = false
     private var spaceLongPressRunnable: Runnable? = null
     private var spaceLongPressTriggered: Boolean = false
+    private var t9LetterLongPressRunnable: Runnable? = null
+    private var t9LetterLongPressTriggered: Boolean = false
+    private var t9LetterPopupKey: Pair<Int, Int>? = null
+    private var t9LetterPopupOptions: List<String> = emptyList()
+    private var t9LetterPopupSelectedIndex: Int = 0
     private val viewConfiguration = ViewConfiguration.get(context)
     private val sidePanelScroller = OverScroller(context)
     private var sidePanelVelocityTracker: VelocityTracker? = null
@@ -182,6 +190,7 @@ class KeyboardView @JvmOverloads constructor(
                 drawKey(canvas, rect, key, pressedKey == Pair(rowIdx, colIdx))
             }
         }
+        drawT9LetterPopup(canvas)
     }
 
     private fun drawT9SidePanel(canvas: Canvas) {
@@ -259,6 +268,17 @@ class KeyboardView @JvmOverloads constructor(
         iconPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         iconPaint.style = Paint.Style.FILL
         iconPaint.strokeWidth = 0f
+        popupPaint.color = if (dark) 0xFF3A3A54.toInt() else 0xFFFFFFFF.toInt()
+        popupPaint.style = Paint.Style.FILL
+        popupPaint.strokeWidth = 0f
+        popupSelectedPaint.color = if (dark) 0xFF5A5A78.toInt() else 0xFFE3E6EF.toInt()
+        popupSelectedPaint.style = Paint.Style.FILL
+        popupSelectedPaint.strokeWidth = 0f
+        popupTextPaint.color = if (dark) 0xFFECECF4.toInt() else 0xFF1A1A2E.toInt()
+        popupTextPaint.textSize = keyTextSize(T9_LETTER_POPUP_TEXT_SIZE_SP, 0.42f)
+        popupTextPaint.textAlign = Paint.Align.CENTER
+        popupTextPaint.style = Paint.Style.FILL
+        popupTextPaint.strokeWidth = 0f
         shiftIconPaint.color = if (dark) 0xFFE0E0E8.toInt() else 0xFF1A1A2E.toInt()
         shiftIconPaint.style = Paint.Style.FILL
         shiftIconPaint.strokeWidth = 0f
@@ -437,6 +457,32 @@ class KeyboardView @JvmOverloads constructor(
         d.draw(canvas)
     }
 
+    private fun drawT9LetterPopup(canvas: Canvas) {
+        val popupKey = t9LetterPopupKey ?: return
+        val options = t9LetterPopupOptions
+        if (!t9LetterLongPressTriggered || options.isEmpty()) return
+        val keyRect = keyRects.getOrNull(popupKey.first)?.getOrNull(popupKey.second) ?: return
+        val popupRect = t9LetterPopupRect(keyRect, options.size)
+        val cornerRadius = dp(12f)
+        canvas.drawRoundRect(popupRect, cornerRadius, cornerRadius, popupPaint)
+
+        val itemWidth = popupRect.width() / options.size
+        val selectedIndex = t9LetterPopupSelectedIndex.coerceIn(options.indices)
+        val selectedRect = RectF(
+            popupRect.left + itemWidth * selectedIndex + dp(4f),
+            popupRect.top + dp(4f),
+            popupRect.left + itemWidth * (selectedIndex + 1) - dp(4f),
+            popupRect.bottom - dp(4f)
+        )
+        canvas.drawRoundRect(selectedRect, dp(9f), dp(9f), popupSelectedPaint)
+
+        val baselineOffset = -(popupTextPaint.descent() + popupTextPaint.ascent()) / 2f
+        options.forEachIndexed { index, letter ->
+            val x = popupRect.left + itemWidth * index + itemWidth / 2f
+            canvas.drawText(letter.uppercase(), x, popupRect.centerY() + baselineOffset, popupTextPaint)
+        }
+    }
+
     private fun drawVoiceMode(canvas: Canvas) {
         // Voice layout is now rendered as keys, not custom drawing
     }
@@ -471,34 +517,47 @@ class KeyboardView @JvmOverloads constructor(
                 }
                 startKeyRepeatIfNeeded(hit)
                 startSpaceLongPressIfNeeded(hit)
+                startT9LetterLongPressIfNeeded(hit)
                 postInvalidateOnAnimation()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (t9LetterLongPressTriggered) {
+                    updateT9LetterPopupSelection(event.x)
+                    invalidate()
+                    return true
+                }
                 if (handleT9PinyinOptionScroll(event.x, event.y)) {
+                    stopT9LetterLongPress()
                     postInvalidateOnAnimation()
                     return true
                 }
                 if (updateSwipeState(event.x, event.y)) {
+                    stopT9LetterLongPress()
                     invalidate()
                     return true
                 }
                 val hit = findKeyAt(event.x, event.y)
                 if (hit == pressedKey) return true
                 stopSpaceLongPress(endVoice = true)
+                stopT9LetterLongPress()
                 stopKeyRepeat()
                 pressedKey = hit
                 startKeyRepeatIfNeeded(hit)
                 startSpaceLongPressIfNeeded(hit)
+                startT9LetterLongPressIfNeeded(hit)
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_UP -> {
                 val repeatWasActive = repeatRunnable != null
                 val spaceLongPressWasActive = spaceLongPressTriggered
+                val t9LetterLongPressWasActive = t9LetterLongPressTriggered
                 val startKey = touchStartKey
                 if (t9PinyinScrollTriggered) {
                     // Option scrolling only changes the visible pinyin list; it must not select or input.
+                } else if (t9LetterLongPressWasActive) {
+                    dispatchT9LetterPopupSelection()
                 } else if (swipeTriggered && startKey != null) {
                     dispatchSwipeKey(startKey)
                 } else if (!spaceLongPressWasActive) {
@@ -509,6 +568,7 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
                 stopSpaceLongPress(endVoice = spaceLongPressWasActive)
+                stopT9LetterLongPress()
                 if (t9PinyinScrollTriggered) {
                     flingT9SidePanelIfNeeded()
                 }
@@ -522,6 +582,7 @@ class KeyboardView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_CANCEL -> {
                 stopSpaceLongPress(endVoice = spaceLongPressTriggered)
+                stopT9LetterLongPress()
                 if (!sidePanelScroller.isFinished) {
                     sidePanelScroller.abortAnimation()
                 }
@@ -686,6 +747,57 @@ class KeyboardView @JvmOverloads constructor(
         spaceLongPressTriggered = false
     }
 
+    private fun startT9LetterLongPressIfNeeded(keyPos: Pair<Int, Int>?) {
+        stopT9LetterLongPress()
+        val key = keyPos?.let { keyAt(it) } ?: return
+        val options = t9LettersForKey(key.keyCode)
+        if (!isT9Layout() || options.isEmpty() || key.isRepeatable) return
+        t9LetterLongPressRunnable = Runnable {
+            if (pressedKey == keyPos && touchStartKey == keyPos && !swipeTriggered && !t9PinyinScrollTriggered) {
+                t9LetterLongPressTriggered = true
+                t9LetterPopupKey = keyPos
+                t9LetterPopupOptions = options
+                t9LetterPopupSelectedIndex = options.size / 2
+                postInvalidateOnAnimation()
+            }
+        }
+        postDelayed(t9LetterLongPressRunnable!!, T9_LETTER_LONG_PRESS_DELAY_MS)
+    }
+
+    private fun stopT9LetterLongPress() {
+        t9LetterLongPressRunnable?.let { removeCallbacks(it) }
+        t9LetterLongPressRunnable = null
+        t9LetterLongPressTriggered = false
+        t9LetterPopupKey = null
+        t9LetterPopupOptions = emptyList()
+        t9LetterPopupSelectedIndex = 0
+    }
+
+    private fun updateT9LetterPopupSelection(x: Float) {
+        val popupKey = t9LetterPopupKey ?: return
+        val options = t9LetterPopupOptions
+        if (options.isEmpty()) return
+        val keyRect = keyRects.getOrNull(popupKey.first)?.getOrNull(popupKey.second) ?: return
+        val popupRect = t9LetterPopupRect(keyRect, options.size)
+        val rawIndex = ((x - popupRect.left) / (popupRect.width() / options.size)).toInt()
+        t9LetterPopupSelectedIndex = rawIndex.coerceIn(options.indices)
+    }
+
+    private fun dispatchT9LetterPopupSelection() {
+        val letter = t9LetterPopupOptions.getOrNull(t9LetterPopupSelectedIndex) ?: return
+        onKeyListener?.invoke(letter.first().code, false, letter)
+    }
+
+    private fun t9LetterPopupRect(keyRect: RectF, optionCount: Int): RectF {
+        val itemWidth = dp(T9_LETTER_POPUP_ITEM_WIDTH_DP)
+        val popupWidth = itemWidth * optionCount
+        val popupHeight = dp(T9_LETTER_POPUP_HEIGHT_DP)
+        val maxLeft = (width - keyGap - popupWidth).coerceAtLeast(keyGap)
+        val left = (keyRect.centerX() - popupWidth / 2f).coerceIn(keyGap, maxLeft)
+        val top = keyRect.top - dp(6f) - popupHeight
+        return RectF(left, top, left + popupWidth, top + popupHeight)
+    }
+
     private fun dispatchKey(keyPos: Pair<Int, Int>) {
         if (isT9SidePanelCell(keyPos.first, keyPos.second)) {
             t9SideItemAt(touchStartY)?.let { key ->
@@ -761,7 +873,11 @@ class KeyboardView @JvmOverloads constructor(
         private const val EMOJI_TEXT_SIZE_SP = 25f
         private const val KAOMOJI_TEXT_SIZE_SP = 13f
         private const val T9_SIDE_PANEL_TEXT_SIZE_SP = 14f
+        private const val T9_LETTER_POPUP_TEXT_SIZE_SP = 22f
         private const val T9_VISIBLE_SIDE_ITEMS = 4
+        private const val T9_LETTER_LONG_PRESS_DELAY_MS = 320L
+        private const val T9_LETTER_POPUP_ITEM_WIDTH_DP = 44f
+        private const val T9_LETTER_POPUP_HEIGHT_DP = 48f
         private const val MODE_SWITCH_ACTIVE_TEXT_SP = 17.5f
         private const val MODE_SWITCH_INACTIVE_TEXT_SP = 12f
         private const val MODE_SWITCH_SLASH_TEXT_SP = 11f
@@ -799,6 +915,18 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun isT9PunctuationKey(keyCode: Int): Boolean =
         isT9Layout() && (keyCode == KeyCode.COMMA || keyCode == KeyCode.PERIOD)
+
+    private fun t9LettersForKey(keyCode: Int): List<String> = when (keyCode) {
+        KeyCode.T9_2 -> listOf("a", "b", "c")
+        KeyCode.T9_3 -> listOf("d", "e", "f")
+        KeyCode.T9_4 -> listOf("g", "h", "i")
+        KeyCode.T9_5 -> listOf("j", "k", "l")
+        KeyCode.T9_6 -> listOf("m", "n", "o")
+        KeyCode.T9_7 -> listOf("p", "q", "r", "s")
+        KeyCode.T9_8 -> listOf("t", "u", "v")
+        KeyCode.T9_9 -> listOf("w", "x", "y", "z")
+        else -> emptyList()
+    }
 
     private fun handleSymbolCategoryKey(keyCode: Int): Boolean {
         val page = when (keyCode) {
@@ -884,7 +1012,7 @@ class KeyboardView @JvmOverloads constructor(
             t9Key("PQRS", KeyCode.T9_7, "7"),
             t9Key("TUV", KeyCode.T9_8, "8"),
             t9Key("WXYZ", KeyCode.T9_9, "9"),
-            t9Key("0", KeyCode.T9_0, "0", 0.72f)
+            KeyDefinition("0", KeyCode.T9_0, 0.72f, subLabel = ".", swipeText = ".")
         ),
         listOf(
             KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),
@@ -915,7 +1043,7 @@ class KeyboardView @JvmOverloads constructor(
             t9Key("PQRS", KeyCode.T9_7, "7"),
             t9Key("TUV", KeyCode.T9_8, "8"),
             t9Key("WXYZ", KeyCode.T9_9, "9"),
-            t9Key("0", KeyCode.T9_0, "0", 0.72f)
+            KeyDefinition("0", KeyCode.T9_0, 0.72f, subLabel = ".", swipeText = ".")
         ),
         listOf(
             KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 0.66f),

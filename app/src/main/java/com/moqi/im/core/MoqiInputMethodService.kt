@@ -502,7 +502,12 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.T9_7 -> '7'
             KeyCode.T9_8 -> '8'
             KeyCode.T9_9 -> '9'
+            KeyCode.T9_0 -> '0'
             else -> return
+        }
+        if (digit == '0' && t9PinyinDigits.isEmpty()) {
+            commitText("0")
+            return
         }
         if (digit == '1') {
             if (t9PinyinDigits.isEmpty()) {
