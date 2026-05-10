@@ -91,8 +91,35 @@ object T9Pinyin {
         return segments
     }
 
+    fun segmentsAfterSelectingPrefix(currentSegments: List<String>, segmentIndex: Int, pinyin: String): List<String>? {
+        val selectedDigits = digitsFor(pinyin)
+        if (selectedDigits.isBlank()) return null
+        val currentSegmentDigits = currentSegments.getOrNull(segmentIndex) ?: return null
+
+        if (selectedDigits.length >= currentSegmentDigits.length ||
+            !currentSegmentDigits.startsWith(selectedDigits)
+        ) {
+            return null
+        }
+
+        val remainingDigits = currentSegmentDigits.drop(selectedDigits.length) +
+            currentSegments.drop(segmentIndex + 1).joinToString("")
+        return currentSegments.take(segmentIndex) + selectedDigits + segmentDigits(remainingDigits)
+    }
+
     fun digitsFor(pinyin: String): String =
         pinyin.mapNotNull { digitByChar[it] }.joinToString("")
+
+    fun prefixForDigits(pinyin: String, digits: String): String? {
+        if (pinyin.isBlank() || digits.isBlank()) return null
+        for (length in pinyin.length downTo 1) {
+            val prefix = pinyin.take(length)
+            if (digitsFor(prefix) == digits) {
+                return prefix
+            }
+        }
+        return null
+    }
 
     fun t9SchemaInputForDigits(digits: String): String = digits
 

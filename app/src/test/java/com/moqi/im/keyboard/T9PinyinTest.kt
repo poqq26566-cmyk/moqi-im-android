@@ -28,6 +28,13 @@ class T9PinyinTest {
     }
 
     @Test
+    fun prefixForDigits_trimsCandidatePinyinToTypedT9Prefix() {
+        assertEquals("z", T9Pinyin.prefixForDigits("zai", "9"))
+        assertEquals("xi", T9Pinyin.prefixForDigits("xian", "94"))
+        assertEquals("xian", T9Pinyin.prefixForDigits("xian", "9426"))
+    }
+
+    @Test
     fun digitsFor_selectedShortPinyinConsumesOnlyItsPrefix() {
         assertEquals("92", T9Pinyin.digitsFor("wa"))
         assertTrue("926".startsWith(T9Pinyin.digitsFor("wa")))
@@ -42,15 +49,57 @@ class T9PinyinTest {
         assertEquals(listOf("64", "426", "62"), state.segments())
         assertTrue(state.options().contains("ni"))
 
-        assertEquals("ni'gan'ma", state.selectPinyin("ni"))
+        assertEquals("ni'426'62", state.selectPinyin("ni"))
+        assertEquals("ni'gan'ma", state.displayText())
         assertEquals(1, state.activeSegmentIndex)
         assertTrue(state.options().contains("hao"))
 
-        assertEquals("ni'hao'ma", state.selectPinyin("hao"))
+        assertEquals("ni'hao'62", state.selectPinyin("hao"))
+        assertEquals("ni'hao'ma", state.displayText())
         assertEquals(2, state.activeSegmentIndex)
         assertTrue(state.options().contains("ma"))
 
         assertEquals("ni'hao'ma", state.selectPinyin("ma"))
         assertEquals("ni'hao'ma", state.replayText())
+    }
+
+    @Test
+    fun selectionState_resegmentsTailAfterSelectingPrefix() {
+        val state = T9PinyinSelectionState()
+        "4343".forEach(state::appendDigit)
+
+        assertEquals(listOf("434", "3"), state.segments())
+        assertTrue(state.options().contains("ge"))
+
+        assertEquals("ge'43", state.selectPinyin("ge"))
+        assertEquals("ge'ge", state.displayText())
+        assertEquals(listOf("43", "43"), state.segments())
+        assertEquals(1, state.activeSegmentIndex)
+        assertTrue(state.options().contains("ge"))
+    }
+
+    @Test
+    fun selectionState_resegmentsLongTailAfterRepeatedPrefixSelections() {
+        val state = T9PinyinSelectionState()
+        "4343486542".forEach(state::appendDigit)
+
+        assertTrue(state.options().contains("ge"))
+
+        state.selectPinyin("ge")
+        assertTrue(state.options().contains("ge"))
+
+        val replayText = state.selectPinyin("ge")
+        assertEquals(listOf("43", "43", "486", "542"), state.segments())
+        assertEquals(2, state.activeSegmentIndex)
+        assertTrue(state.options().contains("guo"))
+        assertEquals("ge'ge'486'542", replayText)
+        assertEquals("ge'ge'gun'jia", state.displayText())
+
+        assertEquals("ge'ge'guo'542", state.selectPinyin("guo"))
+        assertEquals("ge'ge'guo'jia", state.displayText())
+        assertEquals(3, state.activeSegmentIndex)
+        assertTrue(state.options().contains("jia"))
+
+        assertEquals("ge'ge'guo'jia", state.selectPinyin("jia"))
     }
 }

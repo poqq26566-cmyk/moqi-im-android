@@ -562,7 +562,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun replayT9DisplayComposition() {
-        val replayText = t9DisplayComposition()
+        val replayText = t9ReplayTextForEngine()
         replayTextToEngine(replayText)
     }
 
@@ -582,18 +582,12 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun splitT9SegmentForSelectedPinyin(segmentIndex: Int, pinyin: String, segments: List<String>) {
-        val selectedDigits = T9Pinyin.digitsFor(pinyin)
-        val segmentDigits = segments.getOrNull(segmentIndex) ?: return
-        if (selectedDigits.isBlank() ||
-            selectedDigits.length >= segmentDigits.length ||
-            !segmentDigits.startsWith(selectedDigits)
-        ) {
-            return
-        }
-
-        val updatedSegments = segments.toMutableList()
-        updatedSegments[segmentIndex] = selectedDigits
-        updatedSegments.add(segmentIndex + 1, segmentDigits.drop(selectedDigits.length))
+        val updatedSegments = T9Pinyin.segmentsAfterSelectingPrefix(
+            segments,
+            segmentIndex,
+            pinyin
+        ) ?: return
+        val segmentDelta = updatedSegments.size - segments.size
         t9PinyinDigits.clear()
         t9PinyinDigits.append(updatedSegments.joinToString("1"))
 
@@ -602,7 +596,7 @@ class MoqiInputMethodService : InputMethodService() {
         oldSelected.forEach { (index, selected) ->
             when {
                 index < segmentIndex -> t9SelectedPinyinBySegment[index] = selected
-                index > segmentIndex -> t9SelectedPinyinBySegment[index + 1] = selected
+                index > segmentIndex -> t9SelectedPinyinBySegment[index + segmentDelta] = selected
             }
         }
         t9InferredPinyinBySegment.clear()
@@ -942,7 +936,9 @@ class MoqiInputMethodService : InputMethodService() {
         if (inferred.size < segments.size) return
         segments.indices.forEach { index ->
             if (!t9SelectedPinyinBySegment.containsKey(index)) {
-                t9InferredPinyinBySegment[index] = inferred[index]
+                val segment = segments[index]
+                t9InferredPinyinBySegment[index] =
+                    T9Pinyin.prefixForDigits(inferred[index], segment) ?: T9Pinyin.defaultPinyinFor(segment)
             }
         }
     }
@@ -955,6 +951,13 @@ class MoqiInputMethodService : InputMethodService() {
             t9SelectedPinyinBySegment[index]
                 ?: t9InferredPinyinBySegment[index]
                 ?: T9Pinyin.defaultPinyinFor(segment)
+        }.joinToString("'")
+    }
+
+    private fun t9ReplayTextForEngine(): String {
+        if (!isT9Mode || currentMode != InputMode.PINYIN || t9PinyinDigits.isEmpty()) return ""
+        return t9Segments().mapIndexed { index, segment ->
+            t9SelectedPinyinBySegment[index] ?: segment
         }.joinToString("'")
     }
 

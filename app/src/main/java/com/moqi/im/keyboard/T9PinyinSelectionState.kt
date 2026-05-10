@@ -61,6 +61,13 @@ class T9PinyinSelectionState {
     fun replayText(): String {
         if (pinyinDigits.isEmpty()) return ""
         return segments().mapIndexed { index, segment ->
+            selectedPinyinBySegment[index] ?: segment
+        }.joinToString("'")
+    }
+
+    fun displayText(): String {
+        if (pinyinDigits.isEmpty()) return ""
+        return segments().mapIndexed { index, segment ->
             selectedPinyinBySegment[index]
                 ?: inferredPinyinBySegment[index]
                 ?: T9Pinyin.defaultPinyinFor(segment)
@@ -75,18 +82,8 @@ class T9PinyinSelectionState {
     }
 
     private fun splitSegmentForSelectedPinyin(segmentIndex: Int, pinyin: String, currentSegments: List<String>) {
-        val selectedDigits = T9Pinyin.digitsFor(pinyin)
-        val segmentDigits = currentSegments.getOrNull(segmentIndex) ?: return
-        if (selectedDigits.isBlank() ||
-            selectedDigits.length >= segmentDigits.length ||
-            !segmentDigits.startsWith(selectedDigits)
-        ) {
-            return
-        }
-
-        val updatedSegments = currentSegments.toMutableList()
-        updatedSegments[segmentIndex] = selectedDigits
-        updatedSegments.add(segmentIndex + 1, segmentDigits.drop(selectedDigits.length))
+        val updatedSegments = T9Pinyin.segmentsAfterSelectingPrefix(currentSegments, segmentIndex, pinyin) ?: return
+        val segmentDelta = updatedSegments.size - currentSegments.size
         pinyinDigits.clear()
         pinyinDigits.append(updatedSegments.joinToString("1"))
 
@@ -95,7 +92,7 @@ class T9PinyinSelectionState {
         oldSelected.forEach { (index, selected) ->
             when {
                 index < segmentIndex -> selectedPinyinBySegment[index] = selected
-                index > segmentIndex -> selectedPinyinBySegment[index + 1] = selected
+                index > segmentIndex -> selectedPinyinBySegment[index + segmentDelta] = selected
             }
         }
         inferredPinyinBySegment.clear()
