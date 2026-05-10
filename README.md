@@ -27,10 +27,55 @@ Android 端的输入法前端，负责把 [`moqi-ime`](https://github.com/gabool
 
 ## 输入效果展示
 
-![墨奇输入法输入效果展示一](docs/f36d4011b63e2f5abfb2d249c48fb60b.gif)
+### 26 键输入
 
-![墨奇输入法输入效果展示二](docs/4a1d12986443191837a6b97e7d67661e.gif)
+26 键布局会展示下滑副字符，字母键可直接输入拼音，底栏集成符号、数字、中英切换、回车和长按空格语音入口。
 
+![26 键输入界面](docs/moqi-qwerty-26.png)
+
+### 9 键输入
+
+切换到 9 键方案后，键盘自动变为中文九键布局；左侧侧栏显示可选拼音，候选栏同步展示 Rime 候选。
+
+![9 键输入界面](docs/moqi-t9-keyboard.png)
+
+![9 键候选与拼音侧栏](docs/moqi-t9-candidates.png)
+
+### 数字与符号
+
+底栏 `123` 和 `符` 可快速进入数字键盘和符号键盘。符号键盘按常用、英文、中文、网络分组，适合移动端快速输入标点和网址片段。
+
+![数字键盘](docs/moqi-number-keyboard.png)
+
+![符号键盘](docs/moqi-symbol-keyboard.png)
+
+### 键盘内菜单与方案切换
+
+点击候选栏左侧 `...` 打开墨奇菜单，可切换输入状态、方案集、当前输入方案，也可以进入系统输入法选择和设置页。
+
+![键盘内菜单](docs/moqi-keyboard-menu.png)
+
+![方案集与输入方案切换](docs/moqi-keyboard-menu-schema.png)
+
+### 设置、主题与自定义布局
+
+设置页提供 Rime 共享配置目录、主题、键盘高度、按键音效、振动等选项。主题列表可一键切换键盘配色。
+
+![设置页](docs/moqi-settings.png)
+
+![键盘设置](docs/moqi-keyboard-settings.png)
+
+![主题切换](docs/moqi-theme-picker.png)
+
+最后一行布局支持拖动调整，26 键、123 数字键盘和符号键盘都可以分别配置，只影响每个键盘的最后一行。
+
+![最后一行布局调整](docs/moqi-bottom-row-layout.png)
+
+### 语音入口
+
+支持长按空格触发本地语音输入；full 版本会在空格键显示麦克风标识，提示当前构建已启用语音能力。
+
+![语音输入入口](docs/moqi-voice-input.png)
 
 ## 运行架构
 
