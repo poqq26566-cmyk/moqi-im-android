@@ -18,3 +18,5 @@ local.properties
 # Gradle
 .gradle/
 build/
+release_jks_base64.txt
+release.jks
