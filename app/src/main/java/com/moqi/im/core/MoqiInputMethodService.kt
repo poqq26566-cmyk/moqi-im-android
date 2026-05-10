@@ -41,6 +41,7 @@ import com.moqi.im.keyboard.KeyCode
 import com.moqi.im.keyboard.KeyboardMenuView
 import com.moqi.im.keyboard.KeyboardView
 import com.moqi.im.keyboard.T9Pinyin
+import com.moqi.im.util.ImeDebugLog
 import com.moqi.im.voice.ModelManager
 import java.io.File
 import java.net.HttpURLConnection
@@ -186,6 +187,7 @@ class MoqiInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        ImeDebugLog.refresh(applicationContext)
         loadInputModePreference()
     }
 
@@ -338,6 +340,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun handleKey(keyCode: Int, isShifted: Boolean) {
+        if (keyCode == KeyCode.NO_OP) return
         performKeyFeedback(keyCode)
         when (keyCode) {
             KeyCode.DELETE -> handleBackspace()
@@ -368,6 +371,8 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.COMMA -> {
                 if (currentMode == InputMode.ENGLISH) {
                     commitText(",")
+                } else if (shouldCommitT9CompositionBeforeSymbol("，")) {
+                    commitT9CompositionThenText("，")
                 } else {
                     submitMoqiKey(','.code, ','.code, fallbackOnSuccessOnly = true) {
                         commitText("，")
@@ -377,6 +382,8 @@ class MoqiInputMethodService : InputMethodService() {
             KeyCode.PERIOD -> {
                 if (currentMode == InputMode.ENGLISH) {
                     commitText(".")
+                } else if (shouldCommitT9CompositionBeforeSymbol("。")) {
+                    commitT9CompositionThenText("。")
                 } else {
                     submitMoqiKey(MoqiImeKeyMapper.VK_OEM_PERIOD, '.'.code, fallbackOnSuccessOnly = true) {
                         commitText("。")
@@ -421,6 +428,10 @@ class MoqiInputMethodService : InputMethodService() {
             commitText(normalizedText)
             return
         }
+        if (shouldCommitT9CompositionBeforeSymbol(normalizedText)) {
+            commitT9CompositionThenText(normalizedText, paired = isPairedSymbol(normalizedText))
+            return
+        }
         if (isPairedSymbol(normalizedText)) {
             commitPairedText(normalizedText)
             return
@@ -437,6 +448,39 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun isPairedSymbol(text: String): Boolean {
         return text == "“”" || text == "（）" || text == "\"\"" || text == "()"
+    }
+
+    private fun shouldCommitT9CompositionBeforeSymbol(text: String): Boolean {
+        return isT9Mode &&
+            currentMode == InputMode.PINYIN &&
+            t9PinyinDigits.isNotEmpty() &&
+            text.isNotBlank() &&
+            text.none { it.isLetterOrDigit() }
+    }
+
+    private fun commitT9CompositionThenText(text: String, paired: Boolean = false) {
+        if (!::engineRunner.isInitialized) {
+            if (paired) commitPairedText(text) else commitText(text)
+            return
+        }
+        val commitSymbol = {
+            if (paired) {
+                commitPairedText(text)
+            } else {
+                commitText(text)
+            }
+        }
+        val generation = ++t9ReplayGeneration
+        engineRunner.selectCandidate(0) { engineResult ->
+            if (generation != t9ReplayGeneration) {
+                ImeDebugLog.d(TAG) {
+                    "discard stale T9 symbol commit generation=$generation current=$t9ReplayGeneration"
+                }
+                return@selectCandidate
+            }
+            applyMoqiResult(engineResult.result)
+            commitSymbol()
+        }
     }
 
     private fun normalizeSwipeTextForMode(text: String): String {
@@ -552,11 +596,12 @@ class MoqiInputMethodService : InputMethodService() {
         if (!::engineRunner.isInitialized || pinyin.isBlank()) return
         val segments = t9Segments()
         if (segments.isEmpty()) return
-        val segmentIndex = t9ActiveSegmentIndex.coerceIn(0, segments.lastIndex)
+        if (t9ActiveSegmentIndex !in segments.indices) return
+        val segmentIndex = t9ActiveSegmentIndex
         splitT9SegmentForSelectedPinyin(segmentIndex, pinyin, segments)
         t9SelectedPinyinBySegment[segmentIndex] = pinyin
         val updatedSegments = t9Segments()
-        t9ActiveSegmentIndex = (segmentIndex + 1).coerceAtMost(updatedSegments.lastIndex)
+        t9ActiveSegmentIndex = (segmentIndex + 1).coerceAtMost(updatedSegments.size)
         updateT9PinyinOptions()
         replayT9DisplayComposition()
     }
@@ -568,15 +613,21 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun replayTextToEngine(replayText: String) {
         val replayGeneration = ++t9ReplayGeneration
-        Log.d(TAG, "T9 replay generation=$replayGeneration text=$replayText digits=$t9PinyinDigits activeSegment=$t9ActiveSegmentIndex")
-        composingText.clear()
-        updateCandidateEntries(emptyList())
+        ImeDebugLog.d(TAG) {
+            "T9 replay generation=$replayGeneration text=$replayText digits=$t9PinyinDigits " +
+                "activeSegment=$t9ActiveSegmentIndex"
+        }
         engineRunner.replayText(replayText) { engineResult ->
             if (replayGeneration != t9ReplayGeneration) {
-                Log.d(TAG, "discard stale T9 replay generation=$replayGeneration current=$t9ReplayGeneration")
+                ImeDebugLog.d(TAG) {
+                    "discard stale T9 replay generation=$replayGeneration current=$t9ReplayGeneration"
+                }
                 return@replayText
             }
-            Log.d(TAG, "T9 replay result generation=$replayGeneration composition=${engineResult.result.composition} candidates=${engineResult.result.candidateEntries.take(5)}")
+            ImeDebugLog.d(TAG) {
+                "T9 replay result generation=$replayGeneration composition=${engineResult.result.composition} " +
+                    "candidateCount=${engineResult.result.candidateEntries.size}"
+            }
             applyMoqiResult(engineResult.result)
         }
     }
@@ -611,12 +662,21 @@ class MoqiInputMethodService : InputMethodService() {
             .filter { it >= segments.size }
             .forEach { t9InferredPinyinBySegment.remove(it) }
         val options = if (isT9Mode && currentMode == InputMode.PINYIN && segments.isNotEmpty()) {
-            t9ActiveSegmentIndex = t9ActiveSegmentIndex.coerceIn(0, segments.lastIndex)
-            T9Pinyin.optionsFor(segments[t9ActiveSegmentIndex])
+            if (t9ActiveSegmentIndex in segments.indices) {
+                T9Pinyin.optionsFor(segments[t9ActiveSegmentIndex])
+            } else {
+                emptyList()
+            }
         } else {
             emptyList()
         }
-        keyboardView?.setT9PinyinOptions(options)
+        keyboardView?.setT9PinyinOptions(
+            options,
+            showFallback = !isT9Mode ||
+                currentMode != InputMode.PINYIN ||
+                t9PinyinDigits.isEmpty() ||
+                t9ActiveSegmentIndex !in segments.indices
+        )
         updateComposeView()
     }
 
@@ -982,7 +1042,11 @@ class MoqiInputMethodService : InputMethodService() {
                 return@keyDown
             }
             val result = engineResult.result
-            Log.d(TAG, "engineResult seq=${engineResult.sequence} mode=$currentMode keyCode=$keyCode charCode=$charCode success=${result.success} handled=${result.handled} composition=${result.composition} commit=${result.commit} candidates=${result.candidates.size} error=${result.error}")
+            ImeDebugLog.d(TAG) {
+                "engineResult seq=${engineResult.sequence} mode=$currentMode keyCode=$keyCode charCode=$charCode " +
+                    "success=${result.success} handled=${result.handled} composition=${result.composition} " +
+                    "commit=${result.commit} candidates=${result.candidates.size} error=${result.error}"
+            }
             val handled = applyMoqiResult(result)
             if (!handled && shouldRetryWithFullPinyin(result, charCode, retryFullPinyinOnUnhandled)) {
                 retryKeyWithFullPinyin(keyCode, charCode)
@@ -1010,7 +1074,10 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun retryKeyWithFullPinyin(keyCode: Int, charCode: Int) {
         val targetSchema = "rime_frost"
-        Log.d(TAG, "retry unhandled alphabet key with full pinyin schema current=$currentSchemaId target=$targetSchema charCode=$charCode")
+        ImeDebugLog.d(TAG) {
+            "retry unhandled alphabet key with full pinyin schema current=$currentSchemaId " +
+                "target=$targetSchema charCode=$charCode"
+        }
         engineRunner.selectSchema(targetSchema) { schemaResult, schemaId ->
             if (!schemaResult.result.success) {
                 applyMoqiResult(schemaResult.result)

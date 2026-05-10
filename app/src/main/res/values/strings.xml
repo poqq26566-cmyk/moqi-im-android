@@ -61,6 +61,9 @@
     <string name="pref_vibrate">按键振动</string>
     <string name="pref_privacy">隐私声明</string>
     <string name="pref_privacy_summary">墨奇输入法所有数据均在本地处理，不会上传任何用户数据。</string>
+    <string name="pref_debug_category">调试</string>
+    <string name="pref_debug_logging">调试日志</string>
+    <string name="pref_debug_logging_summary">开启后打印输入法的详细调试日志，默认只保留慢日志和错误日志。</string>
     <string name="voice_listening">请说话…</string>
     <string name="voice_error">语音识别失败，请重试</string>
     <string name="voice_back_keyboard">返回键盘</string>

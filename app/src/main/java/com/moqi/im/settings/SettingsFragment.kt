@@ -32,6 +32,7 @@ import com.moqi.im.engine.RimeSchemaEntry
 import com.moqi.im.keyboard.KeyboardBottomRowLayout
 import com.moqi.im.moqiAndroidDataDir
 import com.moqi.im.theme.ThemePalette
+import com.moqi.im.util.ImeDebugLog
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -124,6 +125,12 @@ class SettingsFragment : PreferenceFragmentCompat() {
         vibratePref?.setOnPreferenceChangeListener { _, newValue ->
             val prefs = requireActivity().getSharedPreferences(PREFS_NAME, 0)
             prefs.edit().putBoolean("key_vibrate", newValue as Boolean).apply()
+            true
+        }
+
+        val debugPref = findPreference<SwitchPreferenceCompat>(ImeDebugLog.PREF_KEY)
+        debugPref?.setOnPreferenceChangeListener { _, newValue ->
+            ImeDebugLog.setEnabled(newValue as Boolean)
             true
         }
 

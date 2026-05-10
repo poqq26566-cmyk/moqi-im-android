@@ -2,6 +2,7 @@ package com.moqi.im.engine
 
 import android.view.KeyEvent
 import android.util.Log
+import com.moqi.im.util.ImeDebugLog
 import mobilebridge.MobileResponse
 import mobilebridge.Mobilebridge
 import mobilebridge.Session
@@ -71,7 +72,7 @@ class MoqiImeSession(
                 Log.e(TAG, "init failed guid=$guid error=$initError")
                 return@runCatching
             }
-            Log.i(TAG, "init success guid=$guid")
+            ImeDebugLog.d(TAG) { "init success guid=$guid" }
             val activateStart = System.nanoTime()
             val activateResp = created.activate()
             logDuration("activate", activateStart, "guid=$guid success=${activateResp?.success} candidates=${activateResp?.candidateList?.len() ?: 0}")
@@ -79,7 +80,7 @@ class MoqiImeSession(
                 initError = activateResp?.error.orEmpty().ifBlank { "moqi-ime activate failed" }
                 Log.e(TAG, "activate failed guid=$guid error=$initError")
             } else {
-                Log.i(TAG, "activate success guid=$guid candidates=${activateResp.candidateList?.len() ?: 0}")
+                ImeDebugLog.d(TAG) { "activate success guid=$guid candidates=${activateResp.candidateList?.len() ?: 0}" }
             }
             logDuration("sessionReady", totalStart, "guid=$guid")
         }.onFailure { error ->
@@ -277,13 +278,7 @@ class MoqiImeSession(
         private const val SLOW_LOG_THRESHOLD_MS = 30L
 
         private fun logDuration(operation: String, startNanos: Long, details: String = "") {
-            val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
-            val message = "$operation took=${elapsedMs}ms $details"
-            if (elapsedMs >= SLOW_LOG_THRESHOLD_MS) {
-                Log.w(TAG, message)
-            } else {
-                Log.d(TAG, message)
-            }
+            ImeDebugLog.duration(TAG, operation, startNanos, SLOW_LOG_THRESHOLD_MS) { details }
         }
     }
 }

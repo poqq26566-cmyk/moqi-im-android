@@ -1,6 +1,7 @@
 package com.moqi.im.keyboard
 
 object KeyCode {
+    const val NO_OP = -1
     const val MODE_SWITCH = -100
     const val VOICE = -101
     const val SETTINGS = -102

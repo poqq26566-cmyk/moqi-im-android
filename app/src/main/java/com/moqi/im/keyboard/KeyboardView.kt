@@ -49,6 +49,7 @@ class KeyboardView @JvmOverloads constructor(
     private var currentEmojiMode: EmojiMode = EmojiMode.EMOJI
     private var currentEmojiCategoryIndex: Int = 0
     private var t9PinyinOptions: List<String> = emptyList()
+    private var showT9SideFallback: Boolean = true
     private var t9SidePanelRect = RectF()
     private var t9SidePanelScrollOffset: Float = 0f
 
@@ -144,14 +145,15 @@ class KeyboardView @JvmOverloads constructor(
     fun isDirectCommitLayout(): Boolean =
         currentLayout == Layout.NUMBER || currentLayout == Layout.SYMBOL || currentLayout == Layout.EMOJI
 
-    fun setT9PinyinOptions(options: List<String>) {
-        if (options != t9PinyinOptions) {
+    fun setT9PinyinOptions(options: List<String>, showFallback: Boolean = true) {
+        if (options != t9PinyinOptions || showFallback != showT9SideFallback) {
             t9SidePanelScrollOffset = 0f
             if (!sidePanelScroller.isFinished) {
                 sidePanelScroller.abortAnimation()
             }
         }
         t9PinyinOptions = options
+        showT9SideFallback = showFallback
         clampT9SidePanelScroll()
         if (isT9Layout()) {
             rows = when (currentLayout) {
@@ -831,6 +833,9 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun findKeyAt(x: Float, y: Float): Pair<Int, Int>? {
+        if (isT9Layout() && t9SidePanelRect.contains(x, y)) {
+            return Pair(0, 0)
+        }
         for ((rowIdx, row) in keyRects.withIndex()) {
             for ((colIdx, rect) in row.withIndex()) {
                 if (rect.contains(x, y)) {
@@ -1059,13 +1064,21 @@ class KeyboardView @JvmOverloads constructor(
         KeyDefinition(label, keyCode, widthFactor, subLabel = digit.takeUnless { it == label }, swipeText = digit)
 
     private fun t9SideKey(index: Int, fallbackLabel: String, fallbackKeyCode: Int): KeyDefinition =
-        t9SideItems().getOrNull(index) ?: KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
+        t9SideItems().getOrNull(index)
+            ?: if (showT9SideFallback) {
+                KeyDefinition(fallbackLabel, fallbackKeyCode, 0.72f)
+            } else {
+                KeyDefinition("", KeyCode.NO_OP, 0.72f)
+            }
 
     private fun t9SideItems(): List<KeyDefinition> {
         if (t9PinyinOptions.isNotEmpty()) {
             return t9PinyinOptions.map { option ->
                 KeyDefinition(option, KeyCode.T9_PINYIN_OPTION, 0.72f, commitText = option)
             }
+        }
+        if (!showT9SideFallback) {
+            return emptyList()
         }
         return listOf("，", "。", "？", "：", "！", "…", "；", "、", ".", "-", "@").map { symbol ->
             KeyDefinition(symbol, symbol.singleOrNull()?.code ?: symbol.first().code, 0.72f, commitText = symbol)

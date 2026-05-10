@@ -3,6 +3,7 @@ package com.moqi.im.engine
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.moqi.im.util.ImeDebugLog
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
@@ -47,7 +48,7 @@ class MoqiImeEngineRunner(
             if (session != null && currentGuid == guid) {
                 val result = session?.reset()
                 val schemaId = session?.currentSchemaId().orEmpty()
-                Log.d(TAG, "reuse session for reset guid=$guid success=${result?.success}")
+                ImeDebugLog.d(TAG) { "reuse session for reset guid=$guid success=${result?.success}" }
                 postIfCurrent(targetGeneration) {
                     onReady?.invoke(schemaId)
                 }
@@ -219,7 +220,9 @@ class MoqiImeEngineRunner(
             if (generation.get() == targetGeneration) {
                 action()
             } else {
-                Log.d(TAG, "discard stale engine callback generation=$targetGeneration current=${generation.get()}")
+                ImeDebugLog.d(TAG) {
+                    "discard stale engine callback generation=$targetGeneration current=${generation.get()}"
+                }
             }
         }
     }
@@ -239,13 +242,7 @@ class MoqiImeEngineRunner(
     }
 
     private fun logDuration(operation: String, startNanos: Long, details: String) {
-        val elapsedMs = (System.nanoTime() - startNanos) / 1_000_000
-        val message = "$operation took=${elapsedMs}ms $details"
-        if (elapsedMs >= SLOW_LOG_THRESHOLD_MS) {
-            Log.w(TAG, message)
-        } else {
-            Log.d(TAG, message)
-        }
+        ImeDebugLog.duration(TAG, operation, startNanos, SLOW_LOG_THRESHOLD_MS) { details }
     }
 
     private class EngineThreadFactory : ThreadFactory {

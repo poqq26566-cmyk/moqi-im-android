@@ -72,4 +72,12 @@
             android:selectable="false" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="@string/pref_debug_category">
+        <SwitchPreferenceCompat
+            android:key="debug_logging"
+            android:title="@string/pref_debug_logging"
+            android:summary="@string/pref_debug_logging_summary"
+            android:defaultValue="false" />
+    </PreferenceCategory>
+
 </PreferenceScreen>

@@ -76,6 +76,30 @@ class T9PinyinTest {
         assertEquals(listOf("43", "43"), state.segments())
         assertEquals(1, state.activeSegmentIndex)
         assertTrue(state.options().contains("ge"))
+
+        assertEquals("ge'ge", state.selectPinyin("ge"))
+        assertEquals(2, state.activeSegmentIndex)
+        assertTrue(state.options().isEmpty())
+    }
+
+    @Test
+    fun selectionState_clearsOptionsAfterSelectingAllRepeatedGeSegments() {
+        val state = T9PinyinSelectionState()
+        "434343".forEach(state::appendDigit)
+
+        assertTrue(state.options().contains("ge"))
+
+        assertEquals("ge'434'3", state.selectPinyin("ge"))
+        assertEquals(1, state.activeSegmentIndex)
+        assertTrue(state.options().contains("ge"))
+
+        assertEquals("ge'ge'43", state.selectPinyin("ge"))
+        assertEquals(2, state.activeSegmentIndex)
+        assertTrue(state.options().contains("ge"))
+
+        assertEquals("ge'ge'ge", state.selectPinyin("ge"))
+        assertEquals(3, state.activeSegmentIndex)
+        assertTrue(state.options().isEmpty())
     }
 
     @Test
@@ -101,5 +125,7 @@ class T9PinyinTest {
         assertTrue(state.options().contains("jia"))
 
         assertEquals("ge'ge'guo'jia", state.selectPinyin("jia"))
+        assertEquals(4, state.activeSegmentIndex)
+        assertTrue(state.options().isEmpty())
     }
 }

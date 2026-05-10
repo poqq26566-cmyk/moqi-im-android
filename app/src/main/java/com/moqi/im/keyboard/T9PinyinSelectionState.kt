@@ -42,11 +42,12 @@ class T9PinyinSelectionState {
         if (pinyin.isBlank()) return replayText()
         val currentSegments = segments()
         if (currentSegments.isEmpty()) return replayText()
-        val segmentIndex = activeSegmentIndex.coerceIn(0, currentSegments.lastIndex)
+        if (activeSegmentIndex !in currentSegments.indices) return replayText()
+        val segmentIndex = activeSegmentIndex
         splitSegmentForSelectedPinyin(segmentIndex, pinyin, currentSegments)
         selectedPinyinBySegment[segmentIndex] = pinyin
         val updatedSegments = segments()
-        activeSegmentIndex = (segmentIndex + 1).coerceAtMost(updatedSegments.lastIndex)
+        activeSegmentIndex = (segmentIndex + 1).coerceAtMost(updatedSegments.size)
         pruneSelections()
         return replayText()
     }
@@ -54,7 +55,7 @@ class T9PinyinSelectionState {
     fun options(): List<String> {
         val currentSegments = segments()
         if (currentSegments.isEmpty()) return emptyList()
-        activeSegmentIndex = activeSegmentIndex.coerceIn(0, currentSegments.lastIndex)
+        if (activeSegmentIndex !in currentSegments.indices) return emptyList()
         return T9Pinyin.optionsFor(currentSegments[activeSegmentIndex])
     }
 
