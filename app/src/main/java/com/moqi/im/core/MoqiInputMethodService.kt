@@ -166,6 +166,7 @@ class MoqiInputMethodService : InputMethodService() {
     private val t9SelectedPinyinBySegment = mutableMapOf<Int, String>()
     private val t9InferredPinyinBySegment = mutableMapOf<Int, String>()
     private var t9Runnable: Runnable? = null
+    private var t9ReplayGeneration: Long = 0L
     private val T9_TIMEOUT: Long = 800L
 
     private val t9KeyMap = mapOf(
@@ -566,12 +567,17 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun replayTextToEngine(replayText: String) {
-        engineRunner.resetComposition {
-            composingText.clear()
-            updateCandidateEntries(emptyList())
-            replayText.forEach { ch ->
-                submitMoqiKey(ch.code, ch.code)
+        val replayGeneration = ++t9ReplayGeneration
+        Log.d(TAG, "T9 replay generation=$replayGeneration text=$replayText digits=$t9PinyinDigits activeSegment=$t9ActiveSegmentIndex")
+        composingText.clear()
+        updateCandidateEntries(emptyList())
+        engineRunner.replayText(replayText) { engineResult ->
+            if (replayGeneration != t9ReplayGeneration) {
+                Log.d(TAG, "discard stale T9 replay generation=$replayGeneration current=$t9ReplayGeneration")
+                return@replayText
             }
+            Log.d(TAG, "T9 replay result generation=$replayGeneration composition=${engineResult.result.composition} candidates=${engineResult.result.candidateEntries.take(5)}")
+            applyMoqiResult(engineResult.result)
         }
     }
 
@@ -621,6 +627,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun resetT9State() {
+        t9ReplayGeneration++
         t9TapCount = 0
         t9CurrentKey = 0
         t9PinyinDigits.clear()
@@ -966,7 +973,11 @@ class MoqiInputMethodService : InputMethodService() {
             }
             return
         }
+        val t9Generation = t9ReplayGeneration
         engineRunner.keyDown(keyCode, charCode) { engineResult ->
+            if (isT9Mode && currentMode == InputMode.PINYIN && t9Generation != t9ReplayGeneration) {
+                return@keyDown
+            }
             val result = engineResult.result
             Log.d(TAG, "engineResult seq=${engineResult.sequence} mode=$currentMode keyCode=$keyCode charCode=$charCode success=${result.success} handled=${result.handled} composition=${result.composition} commit=${result.commit} candidates=${result.candidates.size} error=${result.error}")
             val handled = applyMoqiResult(result)

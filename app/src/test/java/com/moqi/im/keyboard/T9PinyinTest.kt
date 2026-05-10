@@ -33,4 +33,24 @@ class T9PinyinTest {
         assertTrue("926".startsWith(T9Pinyin.digitsFor("wa")))
         assertEquals("6", "926".drop(T9Pinyin.digitsFor("wa").length))
     }
+
+    @Test
+    fun selectionState_replaysSelectedNiHaoMaToRime() {
+        val state = T9PinyinSelectionState()
+        "6442662".forEach(state::appendDigit)
+
+        assertEquals(listOf("64", "426", "62"), state.segments())
+        assertTrue(state.options().contains("ni"))
+
+        assertEquals("ni'gan'ma", state.selectPinyin("ni"))
+        assertEquals(1, state.activeSegmentIndex)
+        assertTrue(state.options().contains("hao"))
+
+        assertEquals("ni'hao'ma", state.selectPinyin("hao"))
+        assertEquals(2, state.activeSegmentIndex)
+        assertTrue(state.options().contains("ma"))
+
+        assertEquals("ni'hao'ma", state.selectPinyin("ma"))
+        assertEquals("ni'hao'ma", state.replayText())
+    }
 }

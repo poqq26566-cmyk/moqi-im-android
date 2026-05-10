@@ -115,6 +115,19 @@ class MoqiImeSession(
         }
     }
 
+    fun replayText(text: String): MoqiImeResult {
+        val activeSession = session ?: return initErrorResult()
+        return runCatching {
+            val start = System.nanoTime()
+            val result = activeSession.replayText(text).toResult()
+            logDuration("replayText", start, "length=${text.length} success=${result.success} candidates=${result.candidates.size}")
+            result
+        }.getOrElse { error ->
+            Log.e(TAG, "replayText failed length=${text.length}", error)
+            error.toResult()
+        }
+    }
+
     fun changePage(backward: Boolean): MoqiImeResult {
         val activeSession = session ?: return initErrorResult()
         return runCatching {

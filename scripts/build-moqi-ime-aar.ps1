@@ -117,6 +117,19 @@ if ($LASTEXITCODE -ne 0) {
     throw "gomobile init failed with exit code $LASTEXITCODE"
 }
 
+# gomobile init may install a newer gobind than gomobile itself. The 2026-05
+# gobind snapshot no longer exposes golang.org/x/mobile/bind correctly for bind.
+Write-Host "Pinning gobind to the gomobile-compatible x/mobile version..."
+go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20231127183840-76ac6878050a
+if ($LASTEXITCODE -ne 0) {
+    throw "gomobile install failed with exit code $LASTEXITCODE"
+}
+$gomobilePath = (Get-Item (Join-Path (go env GOPATH) "bin\gomobile.exe")).FullName
+go install golang.org/x/mobile/cmd/gobind@v0.0.0-20231127183840-76ac6878050a
+if ($LASTEXITCODE -ne 0) {
+    throw "gobind install failed with exit code $LASTEXITCODE"
+}
+
 $outputDir = Split-Path -Parent $OutputAar
 New-Item -ItemType Directory -Force $outputDir | Out-Null
 

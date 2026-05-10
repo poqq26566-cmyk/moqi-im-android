@@ -71,6 +71,13 @@ class MoqiImeEngineRunner(
         }
     }
 
+    fun replayText(text: String, callback: (EngineResult) -> Unit) {
+        submit("replayText text=$text length=${text.length}", callback) {
+            val activeSession = session ?: return@submit notReadyResult()
+            activeSession.replayText(text)
+        }
+    }
+
     fun keyDown(keyCode: Int, charCode: Int = 0, callback: (EngineResult) -> Unit) {
         submit("keyDown key=$keyCode char=$charCode", callback) {
             session?.keyDown(keyCode, charCode) ?: notReadyResult()
