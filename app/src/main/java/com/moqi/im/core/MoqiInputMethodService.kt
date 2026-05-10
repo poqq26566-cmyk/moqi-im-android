@@ -56,6 +56,9 @@ class MoqiInputMethodService : InputMethodService() {
         private const val KEY_VIBRATION_MS = 12L
         private const val INITIAL_EXPANDED_PREFETCH_PAGES = 5
         private const val CLIPBOARD_CANDIDATE_PREVIEW_MAX = 42
+        private const val PREFS_NAME = "moqi_im_prefs"
+        private const val PREF_KEYBOARD_HEIGHT = "keyboard_height"
+        private const val DEFAULT_KEYBOARD_HEIGHT_PERCENT = 100
     }
 
     override fun onEvaluateFullscreenMode(): Boolean = false
@@ -93,7 +96,11 @@ class MoqiInputMethodService : InputMethodService() {
     private fun applyInputPanelHeight() {
         val screenHeight = resources.displayMetrics.heightPixels
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val imeHeight = (screenHeight * if (isLandscape) 0.42f else 0.32f).toInt()
+        val defaultHeight = screenHeight * if (isLandscape) 0.42f else 0.32f
+        val heightPercent = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getInt(PREF_KEYBOARD_HEIGHT, DEFAULT_KEYBOARD_HEIGHT_PERCENT)
+            .coerceIn(50, 150)
+        val imeHeight = (defaultHeight * heightPercent / DEFAULT_KEYBOARD_HEIGHT_PERCENT).toInt()
         inputPanelView?.layoutParams?.let { params ->
             params.height = imeHeight
             inputPanelView?.layoutParams = params
@@ -1121,10 +1128,10 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun isKeySoundEnabled(): Boolean =
-        getSharedPreferences("moqi_im_prefs", MODE_PRIVATE).getBoolean("key_sound", true)
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean("key_sound", true)
 
     private fun isKeyVibrationEnabled(): Boolean =
-        getSharedPreferences("moqi_im_prefs", MODE_PRIVATE).getBoolean("key_vibrate", true)
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean("key_vibrate", true)
 
     private fun soundEffectForKey(keyCode: Int?): Int =
         when (keyCode) {
@@ -1493,7 +1500,7 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun loadInputModePreference() {
-        val prefs = getSharedPreferences("moqi_im_prefs", MODE_PRIVATE)
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val modeStr = prefs.getString("input_mode", "pinyin") ?: "pinyin"
         currentMode = when (modeStr) {
             "wubi" -> InputMode.WUBI

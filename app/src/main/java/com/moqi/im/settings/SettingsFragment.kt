@@ -5,7 +5,9 @@ import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import androidx.preference.ListPreference
+import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.SeekBarPreference
 import androidx.preference.SwitchPreferenceCompat
 import com.moqi.im.R
 import com.moqi.im.engine.MoqiImeSession
@@ -15,6 +17,10 @@ import java.util.concurrent.Executors
 import mobilebridge.Mobilebridge
 
 class SettingsFragment : PreferenceFragmentCompat() {
+    companion object {
+        private const val DEFAULT_KEYBOARD_HEIGHT_PERCENT = 100
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var executor: ExecutorService? = null
 
@@ -40,6 +46,24 @@ class SettingsFragment : PreferenceFragmentCompat() {
             true
         }
 
+        val keyboardHeightPref = findPreference<SeekBarPreference>("keyboard_height")
+        keyboardHeightPref?.let { pref ->
+            updateKeyboardHeightSummary(pref, pref.value)
+            pref.setOnPreferenceChangeListener { preference, newValue ->
+                updateKeyboardHeightSummary(preference, newValue as Int)
+                true
+            }
+        }
+
+        findPreference<Preference>("keyboard_height_reset")?.setOnPreferenceClickListener {
+            keyboardHeightPref?.value = DEFAULT_KEYBOARD_HEIGHT_PERCENT
+            keyboardHeightPref?.let { pref ->
+                updateKeyboardHeightSummary(pref, DEFAULT_KEYBOARD_HEIGHT_PERCENT)
+            }
+            Toast.makeText(requireContext(), R.string.pref_keyboard_height_reset_done, Toast.LENGTH_SHORT).show()
+            true
+        }
+
         val soundPref = findPreference<SwitchPreferenceCompat>("key_sound")
         soundPref?.setOnPreferenceChangeListener { _, newValue ->
             val prefs = requireActivity().getSharedPreferences("moqi_im_prefs", 0)
@@ -61,6 +85,10 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
 
         loadRimePreferences()
+    }
+
+    private fun updateKeyboardHeightSummary(pref: Preference, percent: Int) {
+        pref.summary = getString(R.string.pref_keyboard_height_summary, percent)
     }
 
     override fun onDestroy() {

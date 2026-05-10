@@ -20,6 +20,10 @@
     <string name="pref_rime_empty">未发现可用方案</string>
     <string name="pref_rime_switch_failed">切换失败</string>
     <string name="pref_keyboard_height">键盘高度</string>
+    <string name="pref_keyboard_height_summary">当前为默认高度的 %1$d%%</string>
+    <string name="pref_keyboard_height_reset">重置键盘高度</string>
+    <string name="pref_keyboard_height_reset_summary">恢复为当前默认高度</string>
+    <string name="pref_keyboard_height_reset_done">已恢复默认键盘高度</string>
     <string name="pref_sound">按键音效</string>
     <string name="pref_vibrate">按键振动</string>
     <string name="pref_privacy">隐私声明</string>

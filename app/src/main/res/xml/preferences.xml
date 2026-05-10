@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory android:title="@string/pref_input_mode">
         <ListPreference
@@ -22,9 +23,14 @@
         <SeekBarPreference
             android:key="keyboard_height"
             android:title="@string/pref_keyboard_height"
-            android:min="50"
+            android:defaultValue="100"
             android:max="150"
-            android:defaultValue="100" />
+            app:min="50"
+            app:showSeekBarValue="true" />
+        <Preference
+            android:key="keyboard_height_reset"
+            android:title="@string/pref_keyboard_height_reset"
+            android:summary="@string/pref_keyboard_height_reset_summary" />
         <SwitchPreferenceCompat
             android:key="key_sound"
             android:title="@string/pref_sound"
