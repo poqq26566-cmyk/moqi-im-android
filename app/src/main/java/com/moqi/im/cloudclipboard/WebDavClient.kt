@@ -5,7 +5,9 @@ import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.IOException
@@ -149,21 +151,26 @@ class WebDavClient(private val config: CloudClipboardConfig) {
         requireValidSchemeSet(schemeSet)
         requireValidDeviceId(deviceId)
         requireValidSnapshotName(name)
+        if (data.isEmpty()) {
+            throw IOException("本机词库快照为空，已取消上传: $name")
+        }
         ensureRemoteSchemeSetDictDirectory(schemeSet)
         val deviceUrl = dictDeviceDirectoryUrl(schemeSet, deviceId)
         if (!directoryExists(deviceUrl) && !tryMkcol(deviceUrl)) {
             throw IOException("词库同步设备目录无法创建")
         }
+        val snapshotUrl = dictSnapshotUrl(schemeSet, deviceId, name)
         val request = Request.Builder()
-            .url(dictSnapshotUrl(schemeSet, deviceId, name))
+            .url(snapshotUrl)
             .header("Authorization", authHeader)
-            .put(data.toRequestBody("text/plain; charset=utf-8".toMediaType()))
+            .put(fixedLengthUserDictBody(data))
             .build()
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("PUT user dict snapshot failed: HTTP ${response.code}")
             }
         }
+        verifyUploadedUserDictSnapshot(snapshotUrl, name, data.size)
     }
 
     /**
@@ -263,6 +270,35 @@ class WebDavClient(private val config: CloudClipboardConfig) {
     private fun dictSnapshotUrl(schemeSet: String, deviceId: String, name: String): String {
         val dir = dictDeviceDirectoryUrl(schemeSet, deviceId).trimEnd('/')
         return "$dir/${encodePathSegment(name)}"
+    }
+
+    private fun fixedLengthUserDictBody(data: ByteArray): RequestBody =
+        object : RequestBody() {
+            override fun contentType() = "text/plain; charset=utf-8".toMediaType()
+
+            override fun contentLength(): Long = data.size.toLong()
+
+            override fun writeTo(sink: BufferedSink) {
+                sink.write(data)
+            }
+        }
+
+    @Throws(IOException::class)
+    private fun verifyUploadedUserDictSnapshot(url: String, name: String, expectedSize: Int) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader)
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("GET uploaded user dict snapshot failed: HTTP ${response.code}")
+            }
+            val actualSize = response.body?.bytes()?.size ?: 0
+            if (actualSize != expectedSize) {
+                throw IOException("词库快照上传后大小不一致: $name，本地 $expectedSize，远端 $actualSize")
+            }
+        }
     }
 
     private fun propfind(url: String, depth: Int) =

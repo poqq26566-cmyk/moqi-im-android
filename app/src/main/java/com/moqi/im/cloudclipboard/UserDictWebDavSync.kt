@@ -63,16 +63,49 @@ class UserDictWebDavSync(context: Context) {
         deviceId: String
     ): Int {
         val deviceDir = File(syncRoot, deviceId)
-        val files = deviceDir.listFiles { file ->
-            file.isFile && isUserDictSnapshotFileName(file.name)
-        }.orEmpty()
+        val files = waitForLocalSnapshotFiles(deviceDir)
         var uploaded = 0
         files.forEach { file ->
-            client.uploadUserDictSnapshot(schemeSet, deviceId, file.name, file.readBytes())
+            val data = file.readBytes()
+            if (data.isEmpty()) {
+                error("本机词库快照为空，已取消上传: ${file.name}")
+            }
+            client.uploadUserDictSnapshot(schemeSet, deviceId, file.name, data)
             uploaded++
         }
         return uploaded
     }
+
+    private fun waitForLocalSnapshotFiles(deviceDir: File): List<File> {
+        repeat(SNAPSHOT_READY_ATTEMPTS) {
+            val files = localSnapshotFiles(deviceDir)
+            if (files.isEmpty()) {
+                Thread.sleep(SNAPSHOT_READY_DELAY_MS)
+                return@repeat
+            }
+            val sizes = files.map { it.length() }
+            if (sizes.all { it > 0L }) {
+                Thread.sleep(SNAPSHOT_READY_DELAY_MS)
+                val refreshed = localSnapshotFiles(deviceDir)
+                val refreshedSizes = refreshed.map { it.length() }
+                if (refreshed.map { it.name } == files.map { it.name } && refreshedSizes == sizes) {
+                    return refreshed
+                }
+            }
+            Thread.sleep(SNAPSHOT_READY_DELAY_MS)
+        }
+        val files = localSnapshotFiles(deviceDir)
+        val empty = files.firstOrNull { it.length() == 0L }
+        if (empty != null) {
+            error("本机词库快照为空，已取消上传: ${empty.name}")
+        }
+        return files
+    }
+
+    private fun localSnapshotFiles(deviceDir: File): List<File> =
+        deviceDir.listFiles { file ->
+            file.isFile && isUserDictSnapshotFileName(file.name)
+        }.orEmpty().sortedBy { it.name }
 
     private fun readInstallationId(userDir: File): String? {
         val installation = File(userDir, "installation.yaml")
@@ -122,5 +155,7 @@ class UserDictWebDavSync(context: Context) {
         private const val RIME_APP_DIR = "Moqi"
         private const val DEFAULT_SCHEME_SET = "Rime"
         private const val RIME_SYNC_COMMAND_ID = 11
+        private const val SNAPSHOT_READY_ATTEMPTS = 10
+        private const val SNAPSHOT_READY_DELAY_MS = 200L
     }
 }
