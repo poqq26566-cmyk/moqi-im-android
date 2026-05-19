@@ -11,7 +11,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import com.moqi.im.cloudclipboard.WebDavClipEntry
+import com.moqi.im.cloudclipboard.CloudClipboardDisplayItem
 import com.moqi.im.theme.ThemePalette
 import java.text.DateFormat
 import java.util.Date
@@ -26,6 +26,7 @@ class CloudClipboardPanelView @JvmOverloads constructor(
         fun onBack()
         fun onRefresh()
         fun onClipSelected(name: String)
+        fun onClipDelete(name: String)
     }
 
     var callback: Callback? = null
@@ -61,7 +62,7 @@ class CloudClipboardPanelView @JvmOverloads constructor(
         }
     }
 
-    fun render(entries: List<WebDavClipEntry>, errorMessage: String? = null) {
+    fun render(items: List<CloudClipboardDisplayItem>, errorMessage: String? = null) {
         loading = false
         applyThemeBackground()
         content.removeAllViews()
@@ -69,18 +70,18 @@ class CloudClipboardPanelView @JvmOverloads constructor(
             content.addView(createHint(errorMessage))
             return
         }
-        if (entries.isEmpty()) {
+        if (items.isEmpty()) {
             content.addView(createHint("暂无云剪贴板条目\n复制文本后会自动上传（需开启云剪贴板）"))
             return
         }
-        entries.forEach { entry ->
-            content.addView(createClipItem(entry))
+        items.forEach { item ->
+            content.addView(createClipItem(item))
         }
     }
 
     private fun showLoading() {
         content.removeAllViews()
-        content.addView(createHint("正在加载…"))
+        content.addView(createHint("正在加载内容…"))
     }
 
     private fun createHeader(): View {
@@ -136,18 +137,19 @@ class CloudClipboardPanelView @JvmOverloads constructor(
         }
     }
 
-    private fun createClipItem(entry: WebDavClipEntry): View {
+    private fun createClipItem(item: CloudClipboardDisplayItem): View {
         val theme = ThemePalette.current(context)
-        val timeLabel = if (entry.lastModified > 0L) {
+        val timeLabel = if (item.lastModified > 0L) {
             DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-                .format(Date(entry.lastModified))
+                .format(Date(item.lastModified))
         } else {
             ""
         }
-        return LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             val vertical = dp(10)
-            setPadding(dp(12), vertical, dp(12), vertical)
+            setPadding(dp(12), vertical, dp(8), vertical)
             val lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -160,28 +162,50 @@ class CloudClipboardPanelView @JvmOverloads constructor(
             )
             isEnabled = !loading
             setOnClickListener {
-                if (!loading) callback?.onClipSelected(entry.name)
-            }
-            addView(
-                TextView(context).apply {
-                    text = entry.name
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    setTextColor(theme.textColor)
-                    maxLines = 1
-                    ellipsize = TextUtils.TruncateAt.END
-                }
-            )
-            if (timeLabel.isNotBlank()) {
-                addView(
-                    TextView(context).apply {
-                        text = timeLabel
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                        setTextColor(adjustAlpha(theme.textColor, 0.5f))
-                        setPadding(0, dp(4), 0, 0)
-                    }
-                )
+                if (!loading) callback?.onClipSelected(item.name)
             }
         }
+        val bodyColumn = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        bodyColumn.addView(
+            TextView(context).apply {
+                text = item.preview
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, if (item.preview.length <= 24) 16f else 14f)
+                setTextColor(theme.textColor)
+                maxLines = if (item.preview.length <= 48) 2 else 4
+                ellipsize = TextUtils.TruncateAt.END
+                setLineSpacing(dp(2).toFloat(), 1f)
+            }
+        )
+        if (timeLabel.isNotBlank()) {
+            bodyColumn.addView(
+                TextView(context).apply {
+                    text = timeLabel
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    setTextColor(adjustAlpha(theme.textColor, 0.5f))
+                    setPadding(0, dp(4), 0, 0)
+                }
+            )
+        }
+        container.addView(bodyColumn)
+        container.addView(
+            TextView(context).apply {
+                text = "删除"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                setTextColor(0xFFE57373.toInt())
+                setPadding(dp(8), dp(4), dp(4), dp(4))
+                setOnClickListener {
+                    if (!loading) callback?.onClipDelete(item.name)
+                }
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        return container
     }
 
     private fun applyThemeBackground() {

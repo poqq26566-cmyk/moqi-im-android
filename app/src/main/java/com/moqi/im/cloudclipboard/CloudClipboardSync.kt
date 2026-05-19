@@ -6,7 +6,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -60,9 +63,36 @@ class CloudClipboardSync(context: Context) {
         client.listClips()
     }
 
+    suspend fun listClipsForDisplay(
+        maxItems: Int = MAX_DISPLAY_ITEMS,
+        previewLength: Int = PREVIEW_MAX_LENGTH
+    ): List<CloudClipboardDisplayItem> = withContext(Dispatchers.IO) {
+        val client = clientOrThrow()
+        val entries = client.listClips().take(maxItems)
+        coroutineScope {
+            entries.map { entry ->
+                async {
+                    runCatching {
+                        val body = client.downloadClip(entry.name).trim()
+                        CloudClipboardDisplayItem(
+                            name = entry.name,
+                            lastModified = entry.lastModified,
+                            preview = formatPreview(body, previewLength)
+                        )
+                    }.getOrNull()
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
+
     suspend fun downloadClip(name: String): String = withContext(Dispatchers.IO) {
         val client = clientOrThrow()
         client.downloadClip(name)
+    }
+
+    suspend fun deleteClip(name: String) = withContext(Dispatchers.IO) {
+        val client = clientOrThrow()
+        client.deleteClip(name)
     }
 
     suspend fun testConnection(): Result<Unit> = withContext(Dispatchers.IO) {
@@ -89,8 +119,8 @@ class CloudClipboardSync(context: Context) {
                 launchDebouncedUpload(config.minIntervalMs - elapsed + 50L)
                 return
             }
-            val hash = CloudClipboardGuard.contentHash(text)
-            if (hash == lastUploadedHash) return
+            val md5 = CloudClipboardGuard.contentMd5(text)
+            if (md5 == lastUploadedHash) return
             isUploadInFlight = true
             try {
                 val client = WebDavClient.createOrNull(config)
@@ -100,7 +130,7 @@ class CloudClipboardSync(context: Context) {
                 }
                 val filename = CloudClipboardGuard.buildFilename(text)
                 client.uploadClip(filename, text)
-                lastUploadedHash = hash
+                lastUploadedHash = md5
                 lastUploadAt = System.currentTimeMillis()
                 Log.d(TAG, "Uploaded cloud clip: $filename")
             } catch (e: Exception) {
@@ -129,5 +159,17 @@ class CloudClipboardSync(context: Context) {
     companion object {
         private const val TAG = "CloudClipboardSync"
         private const val DEBOUNCE_MS = 500L
+        private const val MAX_DISPLAY_ITEMS = 40
+        private const val PREVIEW_MAX_LENGTH = 240
+
+        private fun formatPreview(text: String, maxLength: Int): String {
+            if (text.isEmpty()) return "（空）"
+            val singleLine = text.replace(Regex("\\s+"), " ").trim()
+            return if (singleLine.length <= maxLength) {
+                singleLine
+            } else {
+                singleLine.take(maxLength) + "…"
+            }
+        }
     }
 }

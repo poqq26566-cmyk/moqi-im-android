@@ -9,6 +9,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.IOException
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.TimeZone
@@ -32,14 +34,15 @@ class WebDavClient(private val config: CloudClipboardConfig) {
     @Throws(IOException::class)
     fun listClips(): List<WebDavClipEntry> {
         ensureRemoteDirectory()
-        val response = propfind(config.remoteDirectoryUrl(), depth = 1)
+        val response = propfind(config.clipDirectoryUrl(), depth = 1)
         if (!response.isSuccessful) {
             throw IOException("PROPFIND failed: HTTP ${response.code}")
         }
         val body = response.body?.string().orEmpty()
         response.close()
         return parsePropfind(body)
-            .filter { it.name.endsWith(".txt", ignoreCase = true) }
+            .filter { isClipFileName(it.name) }
+            .distinctBy { it.name }
             .sortedByDescending { it.lastModified }
     }
 
@@ -55,6 +58,20 @@ class WebDavClient(private val config: CloudClipboardConfig) {
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("PUT failed: HTTP ${response.code}")
+            }
+        }
+    }
+
+    @Throws(IOException::class)
+    fun deleteClip(name: String) {
+        val request = Request.Builder()
+            .url(fileUrl(name))
+            .header("Authorization", authHeader)
+            .delete()
+            .build()
+        http.newCall(request).execute().use { response ->
+            if (response.code !in 200..299 && response.code != 404) {
+                throw IOException("DELETE failed: HTTP ${response.code}")
             }
         }
     }
@@ -93,16 +110,24 @@ class WebDavClient(private val config: CloudClipboardConfig) {
             }
         }
 
-        val dirUrl = config.remoteDirectoryUrl().trimEnd('/') + "/"
-        if (dirUrl.equals(rootUrl, ignoreCase = true)) return
+        val settingsRoot = config.settingsRootUrl()
+        if (!directoryExists(settingsRoot)) {
+            if (!tryMkcol(settingsRoot) || !directoryExists(settingsRoot)) {
+                throw IOException(
+                    "设置目录 ${config.settingsRootPath} 不存在且无法自动创建。" +
+                        "请在 NAS 文件管理中手动新建，或把设置目录改为 /"
+                )
+            }
+        }
 
-        if (directoryExists(dirUrl)) return
+        val clipUrl = config.clipDirectoryUrl().trimEnd('/') + "/"
+        if (directoryExists(clipUrl)) return
 
-        if (tryMkcol(dirUrl) && directoryExists(dirUrl)) return
+        if (tryMkcol(clipUrl) && directoryExists(clipUrl)) return
 
         throw IOException(
-            "远程目录 ${config.remotePath} 不存在且无法自动创建。" +
-                "请在飞牛「文件管理」中手动新建该文件夹，或把远程目录改为 /"
+            "剪贴板目录 ${MoqiWebDavPaths.CLIP_DIR}/ 无法创建。" +
+                "请在 ${config.settingsRootPath} 下手动新建 clip 文件夹"
         )
     }
 
@@ -118,7 +143,7 @@ class WebDavClient(private val config: CloudClipboardConfig) {
         }.getOrDefault(false)
 
     private fun fileUrl(filename: String): String {
-        val dir = config.remoteDirectoryUrl().trimEnd('/')
+        val dir = config.clipDirectoryUrl().trimEnd('/')
         val safeName = filename.trimStart('/')
         return "$dir/$safeName"
     }
@@ -196,10 +221,20 @@ class WebDavClient(private val config: CloudClipboardConfig) {
     }
 
     private fun nameFromHref(href: String): String? {
-        val decoded = href.trim()
+        val decoded = runCatching {
+            URLDecoder.decode(href.trim(), StandardCharsets.UTF_8.name())
+        }.getOrDefault(href.trim())
         if (decoded.isEmpty()) return null
         val segment = decoded.trimEnd('/').substringAfterLast('/')
         return segment.takeIf { it.isNotBlank() }
+    }
+
+    private fun isClipFileName(name: String): Boolean {
+        if (!name.endsWith(".txt", ignoreCase = true)) return false
+        if (name.contains('/')) return false
+        val base = name.dropLast(4)
+        if (base.length == 32 && base.all { it in '0'..'9' || it in 'a'..'f' }) return true
+        return name.startsWith("clip_", ignoreCase = true)
     }
 
     private fun parseHttpDate(raw: String): Long {

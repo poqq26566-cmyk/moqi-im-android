@@ -365,6 +365,7 @@ class MoqiInputMethodService : InputMethodService() {
             override fun onBack() = hideCloudClipboardPanel()
             override fun onRefresh() = refreshCloudClipboardPanel()
             override fun onClipSelected(name: String) = downloadCloudClip(name)
+            override fun onClipDelete(name: String) = deleteCloudClip(name)
         }
         refreshCloudClipboardUi()
         candidateView?.setOnKeyboardDismissListener {
@@ -1571,7 +1572,7 @@ class MoqiInputMethodService : InputMethodService() {
         panel.setLoading(true)
         cloudClipboardExecutor.execute {
             val result = runCatching {
-                runBlocking { cloudClipboardSync.listClips() }
+                runBlocking { cloudClipboardSync.listClipsForDisplay() }
             }
             handler.post {
                 result.onSuccess { panel.render(it) }
@@ -1599,6 +1600,24 @@ class MoqiInputMethodService : InputMethodService() {
                 }.onFailure { error ->
                     showMessage(error.message.orEmpty().ifBlank { "下载失败" })
                     refreshCloudClipboardPanel()
+                }
+            }
+        }
+    }
+
+    private fun deleteCloudClip(name: String) {
+        cloudClipboardPanelView?.setLoading(true)
+        cloudClipboardExecutor.execute {
+            val result = runCatching {
+                runBlocking { cloudClipboardSync.deleteClip(name) }
+            }
+            handler.post {
+                result.onSuccess {
+                    showMessage("已删除")
+                    refreshCloudClipboardPanel()
+                }.onFailure { error ->
+                    cloudClipboardPanelView?.setLoading(false)
+                    showMessage(error.message.orEmpty().ifBlank { "删除失败" })
                 }
             }
         }

@@ -5,7 +5,6 @@ import android.content.ClipDescription
 import android.content.Context
 import android.os.Build
 import java.security.MessageDigest
-import java.util.Locale
 
 object CloudClipboardGuard {
     private const val MIN_TEXT_LENGTH = 2
@@ -32,22 +31,19 @@ object CloudClipboardGuard {
         if (!uploadContextActive) return false
         if (isApplyingRemoteClip) return false
         if (!isUploadableText(text)) return false
-        val hash = contentHash(text)
-        if (hash == lastUploadedHash) return false
+        val md5 = contentMd5(text)
+        if (md5 == lastUploadedHash) return false
         return true
     }
 
-    fun contentHash(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
+    /** 内容 MD5（32 位小写十六进制），用作文件名实现 WebDAV 侧去重。 */
+    fun contentMd5(text: String): String {
+        val digest = MessageDigest.getInstance("MD5")
         val bytes = digest.digest(text.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }.take(16)
+        return bytes.joinToString("") { "%02x".format(it) }
     }
 
-    fun buildFilename(text: String): String {
-        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
-        val hash = contentHash(text).take(8)
-        return "clip_${stamp}_$hash.txt"
-    }
+    fun buildFilename(text: String): String = "${contentMd5(text)}.txt"
 
     private fun isSensitive(description: ClipDescription): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -451,7 +451,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
         findPreference<EditTextPreference>("cloud_clipboard_remote_path")?.setOnPreferenceChangeListener { _, newValue ->
             val raw = newValue as String
-            val normalized = CloudClipboardPrefs.normalizeRemotePath(raw)
+            val normalized = CloudClipboardPrefs.normalizeSettingsRoot(raw)
             if (normalized != raw) {
                 findPreference<EditTextPreference>("cloud_clipboard_remote_path")?.text = normalized
             }

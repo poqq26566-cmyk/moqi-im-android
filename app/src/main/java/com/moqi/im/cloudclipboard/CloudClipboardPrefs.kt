@@ -14,7 +14,7 @@ object CloudClipboardPrefs {
 
     private const val SECURE_PREFS_NAME = "moqi_cloud_clipboard_secure"
     private const val SECURE_KEY_PASSWORD = "cloud_clipboard_password"
-    private const val DEFAULT_REMOTE_PATH = "/moqi-input-method/"
+    private const val DEFAULT_SETTINGS_ROOT = MoqiWebDavPaths.DEFAULT_SETTINGS_ROOT
     private const val DEFAULT_INTERVAL_SEC = 10
 
     fun isEnabled(context: Context): Boolean =
@@ -27,8 +27,8 @@ object CloudClipboardPrefs {
             baseUrl = WebDavUrlPolicy.normalizeBaseUrl(p.getString(KEY_URL, "").orEmpty()),
             username = p.getString(KEY_USERNAME, "").orEmpty().trim(),
             password = readPassword(context),
-            remotePath = normalizeRemotePath(
-                p.getString(KEY_REMOTE_PATH, DEFAULT_REMOTE_PATH) ?: DEFAULT_REMOTE_PATH
+            settingsRootPath = normalizeSettingsRoot(
+                p.getString(KEY_REMOTE_PATH, DEFAULT_SETTINGS_ROOT) ?: DEFAULT_SETTINGS_ROOT
             ),
             minIntervalMs = (p.getString(KEY_MIN_INTERVAL_SEC, DEFAULT_INTERVAL_SEC.toString())
                 ?.toIntOrNull() ?: DEFAULT_INTERVAL_SEC) * 1000L
@@ -61,13 +61,10 @@ object CloudClipboardPrefs {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
-    fun normalizeRemotePath(raw: String): String {
-        var path = raw.trim()
-        if (path.isEmpty()) path = DEFAULT_REMOTE_PATH
-        if (!path.startsWith("/")) path = "/$path"
-        if (!path.endsWith("/")) path = "$path/"
-        return path
-    }
+    fun normalizeSettingsRoot(raw: String): String = MoqiWebDavPaths.normalizeDir(raw)
+
+    /** @deprecated 使用 [normalizeSettingsRoot] */
+    fun normalizeRemotePath(raw: String): String = normalizeSettingsRoot(raw)
 
     fun isConfigComplete(config: CloudClipboardConfig): Boolean =
         config.enabled &&
