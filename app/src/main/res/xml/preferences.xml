@@ -64,6 +64,47 @@
             android:defaultValue="true" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="@string/pref_cloud_clipboard_category">
+        <SwitchPreferenceCompat
+            android:key="cloud_clipboard_enabled"
+            android:title="@string/pref_cloud_clipboard_enabled"
+            android:summary="@string/pref_cloud_clipboard_enabled_summary"
+            android:defaultValue="false" />
+        <EditTextPreference
+            android:key="cloud_clipboard_url"
+            android:title="@string/pref_cloud_clipboard_url"
+            android:summary="@string/pref_cloud_clipboard_url_summary"
+            android:dialogTitle="@string/pref_cloud_clipboard_url"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            android:key="cloud_clipboard_username"
+            android:title="@string/pref_cloud_clipboard_username"
+            android:dialogTitle="@string/pref_cloud_clipboard_username"
+            app:useSimpleSummaryProvider="true" />
+        <Preference
+            android:key="cloud_clipboard_password"
+            android:title="@string/pref_cloud_clipboard_password"
+            android:summary="@string/pref_cloud_clipboard_password_summary" />
+        <EditTextPreference
+            android:key="cloud_clipboard_remote_path"
+            android:title="@string/pref_cloud_clipboard_remote_path"
+            android:summary="@string/pref_cloud_clipboard_remote_path_summary"
+            android:defaultValue="/moqi-input-method/"
+            android:dialogTitle="@string/pref_cloud_clipboard_remote_path"
+            app:useSimpleSummaryProvider="true" />
+        <ListPreference
+            android:key="cloud_clipboard_min_interval_sec"
+            android:title="@string/pref_cloud_clipboard_min_interval"
+            android:entries="@array/cloud_clipboard_interval_entries"
+            android:entryValues="@array/cloud_clipboard_interval_values"
+            android:defaultValue="10"
+            app:useSimpleSummaryProvider="true" />
+        <Preference
+            android:key="cloud_clipboard_test"
+            android:title="@string/pref_cloud_clipboard_test"
+            android:summary="@string/pref_cloud_clipboard_test_summary" />
+    </PreferenceCategory>
+
     <PreferenceCategory android:title="隐私">
         <Preference
             android:key="privacy"

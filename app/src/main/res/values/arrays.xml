@@ -36,4 +36,18 @@
         <item>bubblegum</item>
         <item>pepsi</item>
     </string-array>
+    <string-array name="cloud_clipboard_interval_entries">
+        <item>1 秒</item>
+        <item>3 秒</item>
+        <item>5 秒</item>
+        <item>10 秒</item>
+        <item>60 秒</item>
+    </string-array>
+    <string-array name="cloud_clipboard_interval_values">
+        <item>1</item>
+        <item>3</item>
+        <item>5</item>
+        <item>10</item>
+        <item>60</item>
+    </string-array>
 </resources>

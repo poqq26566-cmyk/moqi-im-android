@@ -3,6 +3,7 @@ package com.moqi.im.core
 import android.annotation.SuppressLint
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -41,8 +42,13 @@ import com.moqi.im.keyboard.KeyCode
 import com.moqi.im.keyboard.CandidateActionMenu
 import com.moqi.im.keyboard.KeyboardMenuView
 import com.moqi.im.keyboard.KeyboardView
+import com.moqi.im.cloudclipboard.CloudClipboardGuard
+import com.moqi.im.cloudclipboard.CloudClipboardPrefs
+import com.moqi.im.cloudclipboard.CloudClipboardSync
+import com.moqi.im.keyboard.CloudClipboardPanelView
 import com.moqi.im.keyboard.QuickReplyPanelView
 import com.moqi.im.quickreply.QuickReplyStore
+import kotlinx.coroutines.runBlocking
 import com.moqi.im.keyboard.T9Pinyin
 import com.moqi.im.util.ImeDebugLog
 import com.moqi.im.voice.ModelManager
@@ -61,6 +67,7 @@ class MoqiInputMethodService : InputMethodService() {
         private const val KEY_VIBRATION_MS = 12L
         private const val INITIAL_EXPANDED_PREFETCH_PAGES = 5
         private const val CLIPBOARD_CANDIDATE_PREVIEW_MAX = 42
+        private const val REMOTE_CLIP_FLAG_CLEAR_MS = 800L
         private const val PREFS_NAME = "moqi_im_prefs"
         private const val PREF_KEYBOARD_HEIGHT = "keyboard_height"
         private const val DEFAULT_KEYBOARD_HEIGHT_PERCENT = 100
@@ -122,6 +129,7 @@ class MoqiInputMethodService : InputMethodService() {
     private var keyboardView: KeyboardView? = null
     private var keyboardMenuView: KeyboardMenuView? = null
     private var quickReplyPanelView: QuickReplyPanelView? = null
+    private var cloudClipboardPanelView: CloudClipboardPanelView? = null
     private var candidateView: CandidateView? = null
     private var composeView: ComposeView? = null
     private var inputPanelView: View? = null
@@ -141,8 +149,15 @@ class MoqiInputMethodService : InputMethodService() {
     private var expandedCandidateInitialPrefetchRemaining: Int = 0
     private var dismissedClipboardText: String? = null
     private var clipboardManager: ClipboardManager? = null
+    private lateinit var cloudClipboardSync: CloudClipboardSync
+    private var imeWindowActive = false
+    private var inputSessionActive = false
+    private var isApplyingRemoteClip = false
+    private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private val cloudClipboardExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val clipboardChangeListener = ClipboardManager.OnPrimaryClipChangedListener {
         dismissedClipboardText = null
+        maybeUploadClipboardToCloud()
         if (composingText.isBlank()) {
             updateCandidates(emptyList())
         }
@@ -193,6 +208,15 @@ class MoqiInputMethodService : InputMethodService() {
         super.onCreate()
         ImeDebugLog.refresh(applicationContext)
         loadInputModePreference()
+        cloudClipboardSync = CloudClipboardSync(applicationContext)
+        prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key.startsWith("cloud_clipboard")) {
+                handler.post { refreshCloudClipboardUi() }
+            }
+        }
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(prefsListener)
+        registerClipboardListener()
     }
 
     private fun ensureEngineRunner() {
@@ -214,6 +238,7 @@ class MoqiInputMethodService : InputMethodService() {
         keyboardView = imeView?.findViewById(com.moqi.im.R.id.keyboard_view)
         keyboardMenuView = imeView?.findViewById(com.moqi.im.R.id.keyboard_menu_view)
         quickReplyPanelView = imeView?.findViewById(com.moqi.im.R.id.quick_reply_panel_view)
+        cloudClipboardPanelView = imeView?.findViewById(com.moqi.im.R.id.cloud_clipboard_panel_view)
         candidateView = imeView?.findViewById(com.moqi.im.R.id.candidate_view)
         composeView = imeView?.findViewById(com.moqi.im.R.id.compose_view)
         inputPanelView = imeView?.findViewById(com.moqi.im.R.id.input_panel)
@@ -317,6 +342,9 @@ class MoqiInputMethodService : InputMethodService() {
         candidateView?.setOnQuickReplyClickListener {
             showQuickReplyPanel()
         }
+        candidateView?.setOnCloudClipboardClickListener {
+            showCloudClipboardPanel()
+        }
         candidateView?.setOnCandidateLongPressListener { index, entry, expanded ->
             showCandidateActionMenu(index, entry, expanded)
         }
@@ -333,6 +361,12 @@ class MoqiInputMethodService : InputMethodService() {
                 }
             }
         }
+        cloudClipboardPanelView?.callback = object : CloudClipboardPanelView.Callback {
+            override fun onBack() = hideCloudClipboardPanel()
+            override fun onRefresh() = refreshCloudClipboardPanel()
+            override fun onClipSelected(name: String) = downloadCloudClip(name)
+        }
+        refreshCloudClipboardUi()
         candidateView?.setOnKeyboardDismissListener {
             requestHideSelf(0)
         }
@@ -353,20 +387,31 @@ class MoqiInputMethodService : InputMethodService() {
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        inputSessionActive = true
         candidateView?.dismissActionMenu()
         clearTextEngineState()
         updateUI()
+        registerClipboardListener()
+        maybeUploadClipboardToCloud()
     }
 
     override fun onFinishInput() {
         candidateView?.dismissActionMenu()
+        inputSessionActive = false
         super.onFinishInput()
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
+        imeWindowActive = true
         applyInputPanelHeight()
         updateKeyboard()
+        maybeUploadClipboardToCloud()
+    }
+
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        imeWindowActive = false
     }
 
     private fun handleKey(keyCode: Int, isShifted: Boolean) {
@@ -1463,6 +1508,8 @@ class MoqiInputMethodService : InputMethodService() {
     private fun showMenuPanel() {
         setCandidateExpanded(false)
         keyboardView?.visibility = View.GONE
+        quickReplyPanelView?.visibility = View.GONE
+        cloudClipboardPanelView?.visibility = View.GONE
         keyboardMenuView?.visibility = View.VISIBLE
         keyboardMenuView?.bringToFront()
         refreshMenuPanel()
@@ -1478,6 +1525,7 @@ class MoqiInputMethodService : InputMethodService() {
         setCandidateExpanded(false)
         keyboardView?.visibility = View.GONE
         keyboardMenuView?.visibility = View.GONE
+        cloudClipboardPanelView?.visibility = View.GONE
         quickReplyPanelView?.visibility = View.VISIBLE
         quickReplyPanelView?.bringToFront()
         refreshQuickReplyPanel()
@@ -1491,6 +1539,111 @@ class MoqiInputMethodService : InputMethodService() {
 
     private fun refreshQuickReplyPanel() {
         quickReplyPanelView?.render(QuickReplyStore.load(this))
+    }
+
+    private fun refreshCloudClipboardUi() {
+        cloudClipboardSync.reloadConfig()
+        candidateView?.setCloudClipboardEnabled(CloudClipboardPrefs.isEnabled(this))
+    }
+
+    private fun showCloudClipboardPanel() {
+        if (!CloudClipboardPrefs.isEnabled(this)) {
+            showMessage("请先在设置中开启云剪贴板")
+            return
+        }
+        setCandidateExpanded(false)
+        keyboardView?.visibility = View.GONE
+        keyboardMenuView?.visibility = View.GONE
+        quickReplyPanelView?.visibility = View.GONE
+        cloudClipboardPanelView?.visibility = View.VISIBLE
+        cloudClipboardPanelView?.bringToFront()
+        refreshCloudClipboardPanel()
+    }
+
+    private fun hideCloudClipboardPanel() {
+        cloudClipboardPanelView?.visibility = View.GONE
+        keyboardView?.visibility = View.VISIBLE
+        updateKeyboard()
+    }
+
+    private fun refreshCloudClipboardPanel() {
+        val panel = cloudClipboardPanelView ?: return
+        panel.setLoading(true)
+        cloudClipboardExecutor.execute {
+            val result = runCatching {
+                runBlocking { cloudClipboardSync.listClips() }
+            }
+            handler.post {
+                result.onSuccess { panel.render(it) }
+                    .onFailure { error ->
+                        panel.render(
+                            emptyList(),
+                            error.message.orEmpty().ifBlank { "加载失败" }
+                        )
+                    }
+            }
+        }
+    }
+
+    private fun downloadCloudClip(name: String) {
+        cloudClipboardPanelView?.setLoading(true)
+        cloudClipboardExecutor.execute {
+            val result = runCatching {
+                runBlocking { cloudClipboardSync.downloadClip(name) }
+            }
+            handler.post {
+                cloudClipboardPanelView?.setLoading(false)
+                result.onSuccess { text ->
+                    applyRemoteClip(text)
+                    hideCloudClipboardPanel()
+                }.onFailure { error ->
+                    showMessage(error.message.orEmpty().ifBlank { "下载失败" })
+                    refreshCloudClipboardPanel()
+                }
+            }
+        }
+    }
+
+    private fun applyRemoteClip(text: String) {
+        if (text.isBlank()) return
+        isApplyingRemoteClip = true
+        dismissedClipboardText = text
+        currentInputConnection?.commitText(text, 1)
+        handler.postDelayed({ isApplyingRemoteClip = false }, REMOTE_CLIP_FLAG_CLEAR_MS)
+    }
+
+    private fun isCloudClipboardUploadContext(): Boolean =
+        imeWindowActive || inputSessionActive || isInputViewShown
+
+    private fun maybeUploadClipboardToCloud() {
+        if (!::cloudClipboardSync.isInitialized) return
+        val config = CloudClipboardPrefs.loadConfig(this)
+        if (!config.enabled) return
+        if (!isCloudClipboardUploadContext()) {
+            ImeDebugLog.d(TAG) { "cloud clip skip: no upload context" }
+            return
+        }
+        val manager = clipboardManager
+            ?: (getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.also { clipboardManager = it }
+            ?: return
+        val clip = manager.primaryClip ?: return
+        val text = CloudClipboardGuard.extractPlainText(this, clip) ?: run {
+            ImeDebugLog.d(TAG) { "cloud clip skip: not plain text or filtered" }
+            return
+        }
+        if (!CloudClipboardGuard.shouldUpload(
+                config,
+                text,
+                isCloudClipboardUploadContext(),
+                isApplyingRemoteClip,
+                cloudClipboardSync.lastUploadedContentHash()
+            )
+        ) {
+            ImeDebugLog.d(TAG) { "cloud clip skip: guard rejected len=${text.length}" }
+            return
+        }
+        ImeDebugLog.d(TAG) { "cloud clip schedule upload len=${text.length}" }
+        cloudClipboardSync.scheduleUpload(text)
     }
 
     private fun showCandidateActionMenu(index: Int, entry: CandidateEntry, expanded: Boolean) {
@@ -1717,9 +1870,19 @@ class MoqiInputMethodService : InputMethodService() {
             engineRunner.close()
         }
         clipboardManager?.removePrimaryClipChangedListener(clipboardChangeListener)
+        prefsListener?.let {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(it)
+        }
+        prefsListener = null
+        if (::cloudClipboardSync.isInitialized) {
+            cloudClipboardSync.shutdown()
+        }
+        cloudClipboardExecutor.shutdown()
         downloadExecutor.shutdown()
         keyboardView = null
         keyboardMenuView = null
+        quickReplyPanelView = null
+        cloudClipboardPanelView = null
         candidateView = null
         composeView = null
         inputPanelView = null

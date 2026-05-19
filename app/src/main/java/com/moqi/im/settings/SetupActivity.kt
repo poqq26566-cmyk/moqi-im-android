@@ -27,6 +27,10 @@ class SetupActivity : AppCompatActivity() {
             showInputMethodPicker()
         }
 
+        findViewById<Button>(R.id.btn_settings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+
         findViewById<Button>(R.id.btn_input_test).setOnClickListener {
             startActivity(Intent(this, InputTestActivity::class.java))
         }

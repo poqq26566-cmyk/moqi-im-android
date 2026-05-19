@@ -78,6 +78,8 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
     add("fullImplementation", files("libs/sherpa-onnx-1.13.0.aar"))
     implementation(files("libs/moqi-ime.aar"))
     testImplementation("junit:junit:4.13.2")

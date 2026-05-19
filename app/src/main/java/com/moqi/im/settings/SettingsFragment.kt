@@ -9,7 +9,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.DragEvent
+import android.widget.EditText
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -24,8 +26,13 @@ import androidx.preference.ListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SeekBarPreference
+import androidx.preference.EditTextPreference
 import androidx.preference.SwitchPreferenceCompat
 import com.moqi.im.R
+import com.moqi.im.cloudclipboard.CloudClipboardPrefs
+import com.moqi.im.cloudclipboard.WebDavUrlPolicy
+import com.moqi.im.cloudclipboard.CloudClipboardSync
+import kotlinx.coroutines.runBlocking
 import com.moqi.im.data.RimeSafSync
 import com.moqi.im.engine.MoqiImeSession
 import com.moqi.im.engine.RimeSchemaEntry
@@ -113,6 +120,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
         }
 
         setupBottomRowLayoutPreference()
+        setupCloudClipboardPreferences()
 
         val soundPref = findPreference<SwitchPreferenceCompat>("key_sound")
         soundPref?.setOnPreferenceChangeListener { _, newValue ->
@@ -429,6 +437,92 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
     private fun updateKeyboardHeightSummary(pref: Preference, percent: Int) {
         pref.summary = getString(R.string.pref_keyboard_height_summary, percent)
+    }
+
+    private fun setupCloudClipboardPreferences() {
+        updateCloudClipboardPasswordSummary()
+        findPreference<EditTextPreference>("cloud_clipboard_url")?.setOnPreferenceChangeListener { _, newValue ->
+            val raw = newValue as String
+            val normalized = WebDavUrlPolicy.normalizeBaseUrl(raw)
+            if (normalized != raw) {
+                findPreference<EditTextPreference>("cloud_clipboard_url")?.text = normalized
+            }
+            true
+        }
+        findPreference<EditTextPreference>("cloud_clipboard_remote_path")?.setOnPreferenceChangeListener { _, newValue ->
+            val raw = newValue as String
+            val normalized = CloudClipboardPrefs.normalizeRemotePath(raw)
+            if (normalized != raw) {
+                findPreference<EditTextPreference>("cloud_clipboard_remote_path")?.text = normalized
+            }
+            true
+        }
+        findPreference<Preference>("cloud_clipboard_password")?.setOnPreferenceClickListener {
+            showCloudClipboardPasswordDialog()
+            true
+        }
+        findPreference<Preference>("cloud_clipboard_test")?.setOnPreferenceClickListener {
+            testCloudClipboardConnection()
+            true
+        }
+    }
+
+    private fun updateCloudClipboardPasswordSummary() {
+        val pref = findPreference<Preference>("cloud_clipboard_password") ?: return
+        pref.summary = if (CloudClipboardPrefs.hasPassword(requireContext())) {
+            getString(R.string.pref_cloud_clipboard_password_set)
+        } else {
+            getString(R.string.pref_cloud_clipboard_password_summary)
+        }
+    }
+
+    private fun showCloudClipboardPasswordDialog() {
+        val context = requireContext()
+        val input = EditText(context).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.pref_cloud_clipboard_password_dialog_title)
+            .setView(input)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val password = input.text?.toString().orEmpty()
+                if (password.isNotEmpty()) {
+                    CloudClipboardPrefs.savePassword(context, password)
+                } else {
+                    CloudClipboardPrefs.clearPassword(context)
+                }
+                updateCloudClipboardPasswordSummary()
+                Toast.makeText(context, R.string.pref_cloud_clipboard_password_saved, Toast.LENGTH_SHORT).show()
+            }
+            .show()
+    }
+
+    private fun testCloudClipboardConnection() {
+        val context = context?.applicationContext ?: return
+        showRimeProgress(R.string.pref_cloud_clipboard_test)
+        executor?.execute {
+            val sync = CloudClipboardSync(context)
+            val result = runBlocking { sync.testConnection() }
+            sync.shutdown()
+            mainHandler.post {
+                hideRimeProgress()
+                if (!isAdded) return@post
+                result.onSuccess {
+                    Toast.makeText(requireContext(), R.string.pref_cloud_clipboard_test_ok, Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        requireContext(),
+                        getString(
+                            R.string.pref_cloud_clipboard_test_failed,
+                            error.message.orEmpty().ifBlank { error::class.java.simpleName }
+                        ),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     override fun onDestroy() {

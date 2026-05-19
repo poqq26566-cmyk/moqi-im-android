@@ -52,17 +52,21 @@ class CandidateView @JvmOverloads constructor(
     private var menuButtonRect = RectF()
     private var emojiButtonRect = RectF()
     private var quickReplyButtonRect = RectF()
+    private var cloudClipboardButtonRect = RectF()
     private var moreButtonRect = RectF()
     private var pressedIndex: Int = -1
     private var pressedControl: Int = -1
     private var menuButtonPressed = false
     private var emojiButtonPressed = false
     private var quickReplyButtonPressed = false
+    private var cloudClipboardButtonPressed = false
     private var moreButtonPressed = false
     private var candidateLongPressTriggered = false
     private var candidateLongPressRunnable: Runnable? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var quickReplyIcon: Drawable? = null
+    private var cloudClipboardIcon: Drawable? = null
+    private var cloudClipboardEnabled = false
     private var expanded = false
     private var scrollOffset = 0f
     private var maxScrollOffset = 0f
@@ -88,6 +92,7 @@ class CandidateView @JvmOverloads constructor(
     private var onMenuClick: (() -> Unit)? = null
     private var onEmojiClick: (() -> Unit)? = null
     private var onQuickReplyClick: (() -> Unit)? = null
+    private var onCloudClipboardClick: (() -> Unit)? = null
     private var onCandidateLongPress: ((Int, CandidateEntry, Boolean) -> Unit)? = null
     private var onKeyboardDismiss: (() -> Unit)? = null
     private var onClipboardDismiss: (() -> Unit)? = null
@@ -109,6 +114,14 @@ class CandidateView @JvmOverloads constructor(
     init {
         applyThemeColors()
         quickReplyIcon = ContextCompat.getDrawable(context, R.drawable.ic_quick_reply)
+        cloudClipboardIcon = ContextCompat.getDrawable(context, R.drawable.ic_cloud_clipboard)
+    }
+
+    fun setCloudClipboardEnabled(enabled: Boolean) {
+        if (cloudClipboardEnabled == enabled) return
+        cloudClipboardEnabled = enabled
+        requestLayout()
+        invalidate()
     }
 
     private fun applyThemeColors() {
@@ -196,6 +209,10 @@ class CandidateView @JvmOverloads constructor(
 
     fun setOnQuickReplyClickListener(listener: () -> Unit) {
         onQuickReplyClick = listener
+    }
+
+    fun setOnCloudClipboardClickListener(listener: () -> Unit) {
+        onCloudClipboardClick = listener
     }
 
     fun setOnCandidateLongPressListener(listener: (Int, CandidateEntry, Boolean) -> Unit) {
@@ -296,6 +313,9 @@ class CandidateView @JvmOverloads constructor(
         if (shouldShowQuickReplyButton()) {
             drawQuickReplyButton(canvas)
         }
+        if (shouldShowCloudClipboardButton()) {
+            drawCloudClipboardButton(canvas)
+        }
         if (candidates.isNotEmpty()) {
             if (moreButtonPressed) {
                 canvas.drawRoundRect(moreButtonRect, dp(6f), dp(6f), highlightPaint)
@@ -314,7 +334,9 @@ class CandidateView @JvmOverloads constructor(
             commentPaint.color = if (isDarkMode) 0xFF858C94.toInt() else theme.textColor
             commentPaint.textAlign = Paint.Align.CENTER
             val baseline = height / 2f - (commentPaint.descent() + commentPaint.ascent()) / 2f
-            val statusLeft = if (!quickReplyButtonRect.isEmpty) {
+            val statusLeft = if (!cloudClipboardButtonRect.isEmpty) {
+                cloudClipboardButtonRect.right
+            } else if (!quickReplyButtonRect.isEmpty) {
                 quickReplyButtonRect.right
             } else if (!emojiButtonRect.isEmpty) {
                 emojiButtonRect.right
@@ -391,14 +413,21 @@ class CandidateView @JvmOverloads constructor(
                     !emojiButtonPressed &&
                     shouldShowQuickReplyButton() &&
                     quickReplyButtonRect.contains(event.x, event.y)
+                cloudClipboardButtonPressed = !menuButtonPressed &&
+                    !emojiButtonPressed &&
+                    !quickReplyButtonPressed &&
+                    shouldShowCloudClipboardButton() &&
+                    cloudClipboardButtonRect.contains(event.x, event.y)
                 pressedControl = findControlAt(event.x, event.y)
                 moreButtonPressed = !menuButtonPressed &&
                     !emojiButtonPressed &&
                     !quickReplyButtonPressed &&
+                    !cloudClipboardButtonPressed &&
                     (pressedControl >= 0 || moreButtonRect.contains(event.x, event.y)) &&
                     (candidates.isNotEmpty() || !expanded)
                 pressedIndex = if (
-                    menuButtonPressed || emojiButtonPressed || quickReplyButtonPressed || moreButtonPressed
+                    menuButtonPressed || emojiButtonPressed || quickReplyButtonPressed ||
+                        cloudClipboardButtonPressed || moreButtonPressed
                 ) {
                     -1
                 } else {
@@ -429,6 +458,13 @@ class CandidateView @JvmOverloads constructor(
                 if (quickReplyButtonPressed) {
                     if (!quickReplyButtonRect.contains(event.x, event.y)) {
                         quickReplyButtonPressed = false
+                        invalidate()
+                    }
+                    return true
+                }
+                if (cloudClipboardButtonPressed) {
+                    if (!cloudClipboardButtonRect.contains(event.x, event.y)) {
+                        cloudClipboardButtonPressed = false
                         invalidate()
                     }
                     return true
@@ -502,6 +538,16 @@ class CandidateView @JvmOverloads constructor(
                     invalidate()
                     return true
                 }
+                if (cloudClipboardButtonPressed) {
+                    if (cloudClipboardButtonRect.contains(event.x, event.y)) {
+                        onCloudClipboardClick?.invoke()
+                    }
+                    cloudClipboardButtonPressed = false
+                    cancelCandidateLongPress()
+                    recycleVelocityTracker()
+                    invalidate()
+                    return true
+                }
                 cancelCandidateLongPress()
                 if (moreButtonPressed) {
                     val control = findControlAt(event.x, event.y)
@@ -563,6 +609,7 @@ class CandidateView @JvmOverloads constructor(
                 menuButtonPressed = false
                 emojiButtonPressed = false
                 quickReplyButtonPressed = false
+                cloudClipboardButtonPressed = false
                 moreButtonPressed = false
                 pageChangeRequested = false
                 isDragging = false
@@ -580,6 +627,7 @@ class CandidateView @JvmOverloads constructor(
         val buttonWidth = dp(48f)
         val emojiButtonWidth = dp(64f)
         val quickReplyButtonWidth = dp(56f)
+        val cloudClipboardButtonWidth = dp(48f)
         menuButtonRect = if (candidates.isEmpty()) {
             RectF(0f, 0f, buttonWidth, totalHeight)
         } else {
@@ -595,8 +643,19 @@ class CandidateView @JvmOverloads constructor(
         } else {
             RectF()
         }
+        cloudClipboardButtonRect = if (candidates.isEmpty() && cloudClipboardEnabled) {
+            RectF(
+                quickReplyButtonRect.right,
+                0f,
+                quickReplyButtonRect.right + cloudClipboardButtonWidth,
+                totalHeight
+            )
+        } else {
+            RectF()
+        }
         moreButtonRect = RectF((totalWidth - buttonWidth).coerceAtLeast(0f), 0f, totalWidth.toFloat(), totalHeight)
         val contentLeft = when {
+            !cloudClipboardButtonRect.isEmpty -> cloudClipboardButtonRect.right
             !quickReplyButtonRect.isEmpty -> quickReplyButtonRect.right
             !emojiButtonRect.isEmpty -> emojiButtonRect.right
             !menuButtonRect.isEmpty -> menuButtonRect.right
@@ -703,6 +762,9 @@ class CandidateView @JvmOverloads constructor(
 
     private fun shouldShowQuickReplyButton(): Boolean = candidates.isEmpty() && !quickReplyButtonRect.isEmpty
 
+    private fun shouldShowCloudClipboardButton(): Boolean =
+        candidates.isEmpty() && cloudClipboardEnabled && !cloudClipboardButtonRect.isEmpty
+
     private fun drawMenuButton(canvas: Canvas) {
         if (menuButtonPressed) {
             canvas.drawRoundRect(menuButtonRect, dp(6f), dp(6f), highlightPaint)
@@ -734,6 +796,25 @@ class CandidateView @JvmOverloads constructor(
         val size = dp(22f).toInt()
         val left = (quickReplyButtonRect.centerX() - size / 2f).toInt()
         val top = (quickReplyButtonRect.centerY() - size / 2f).toInt()
+        icon.setBounds(left, top, left + size, top + size)
+        icon.draw(canvas)
+    }
+
+    private fun drawCloudClipboardButton(canvas: Canvas) {
+        if (cloudClipboardButtonPressed) {
+            canvas.drawRoundRect(cloudClipboardButtonRect, dp(6f), dp(6f), highlightPaint)
+        }
+        canvas.drawLine(
+            cloudClipboardButtonRect.right,
+            dp(8f),
+            cloudClipboardButtonRect.right,
+            height - dp(8f),
+            dividerPaint
+        )
+        val icon = cloudClipboardIcon ?: return
+        val size = dp(22f).toInt()
+        val left = (cloudClipboardButtonRect.centerX() - size / 2f).toInt()
+        val top = (cloudClipboardButtonRect.centerY() - size / 2f).toInt()
         icon.setBounds(left, top, left + size, top + size)
         icon.draw(canvas)
     }

@@ -14,6 +14,7 @@
 
     <application
         android:name=".MoqiApplication"
+        android:usesCleartextTraffic="true"
         android:allowBackup="false"
         android:icon="@drawable/mo_icon"
         android:roundIcon="@drawable/mo_icon"

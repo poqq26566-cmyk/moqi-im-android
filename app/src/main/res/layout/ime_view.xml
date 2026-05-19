@@ -44,6 +44,14 @@
             android:layout_alignParentBottom="true"
             android:visibility="gone" />
 
+        <com.moqi.im.keyboard.CloudClipboardPanelView
+            android:id="@+id/cloud_clipboard_panel_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_alignParentTop="true"
+            android:layout_alignParentBottom="true"
+            android:visibility="gone" />
+
     </RelativeLayout>
 
     <com.moqi.im.keyboard.ComposeView
