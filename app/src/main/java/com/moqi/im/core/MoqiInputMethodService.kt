@@ -64,6 +64,8 @@ class MoqiInputMethodService : InputMethodService() {
     companion object {
         private const val TAG = "MoqiInputMethodService"
         private const val RIME_INIT_MESSAGE = "正在初始化 Rime…"
+        /** 仅当初始化超过该时长才显示提示，避免中英文切换等快速 reset 时一闪而过。 */
+        private const val RIME_INIT_MESSAGE_DELAY_MS = 400L
         private const val KEY_VIBRATION_MS = 12L
         private const val INITIAL_EXPANDED_PREFETCH_PAGES = 5
         private const val CLIPBOARD_CANDIDATE_PREVIEW_MAX = 42
@@ -144,6 +146,13 @@ class MoqiInputMethodService : InputMethodService() {
     private var isListening: Boolean = false
     private var isSpaceVoiceHoldActive: Boolean = false
     private var isEngineInitializing: Boolean = true
+    private var rimeInitMessageScheduled: Boolean = false
+    private val showRimeInitMessageRunnable = Runnable {
+        rimeInitMessageScheduled = false
+        if (isEngineInitializing && guidForMode(currentMode) == Mobilebridge.GUIDRime && composingText.isEmpty()) {
+            composeView?.setComposingText(RIME_INIT_MESSAGE)
+        }
+    }
     private var expandedCandidatePageIndex: Int = 0
     private var isExpandedCandidateLoading: Boolean = false
     private var expandedCandidateInitialPrefetchRemaining: Int = 0
@@ -1320,12 +1329,23 @@ class MoqiInputMethodService : InputMethodService() {
     }
 
     private fun showRimeInitializingIfNeeded() {
-        if (isEngineInitializing && guidForMode(currentMode) == Mobilebridge.GUIDRime && composingText.isEmpty()) {
-            composeView?.setComposingText(RIME_INIT_MESSAGE)
+        if (!isEngineInitializing || guidForMode(currentMode) != Mobilebridge.GUIDRime || composingText.isNotEmpty()) {
+            cancelRimeInitMessageSchedule()
+            return
         }
+        if (rimeInitMessageScheduled) return
+        rimeInitMessageScheduled = true
+        handler.removeCallbacks(showRimeInitMessageRunnable)
+        handler.postDelayed(showRimeInitMessageRunnable, RIME_INIT_MESSAGE_DELAY_MS)
+    }
+
+    private fun cancelRimeInitMessageSchedule() {
+        rimeInitMessageScheduled = false
+        handler.removeCallbacks(showRimeInitMessageRunnable)
     }
 
     private fun clearRimeInitializingMessage() {
+        cancelRimeInitMessageSchedule()
         if (composeView == null || composingText.isNotEmpty()) return
         composeView?.setComposingText("")
     }
