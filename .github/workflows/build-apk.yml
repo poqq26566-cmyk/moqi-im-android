@@ -48,5 +48,4 @@ jobs:
         with:
           name: moqi-im-android-lite-debug
           path: app/build/outputs/apk/lite/debug/*.apk
-          if-no-files-f
-          ound: error
+          if-no-files-found: error
