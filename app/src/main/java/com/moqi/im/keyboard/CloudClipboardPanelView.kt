@@ -1,6 +1,7 @@
 package com.moqi.im.keyboard
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.AttributeSet
@@ -8,9 +9,12 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.moqi.im.cloudclipboard.ClipboardImageHistory
 import com.moqi.im.cloudclipboard.CloudClipboardDisplayItem
 import com.moqi.im.theme.ThemePalette
 import java.text.DateFormat
@@ -27,12 +31,21 @@ class CloudClipboardPanelView @JvmOverloads constructor(
         fun onRefresh()
         fun onClipSelected(name: String)
         fun onClipDelete(name: String)
+        /** 点击本地剪贴板图片缩略图，请求把图片提交到当前输入框。 */
+        fun onImageSelected(entry: ClipboardImageHistory.Entry) {}
+        fun onImageDelete(entry: ClipboardImageHistory.Entry) {}
     }
 
     var callback: Callback? = null
 
     private val density = resources.displayMetrics.density
     private val scrollView = ScrollView(context)
+    private val imageStrip = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+    }
+    private val imageStripScroll = HorizontalScrollView(context).apply {
+        isHorizontalScrollBarEnabled = false
+    }
     private val content = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(8), dp(12), dp(12))
@@ -42,6 +55,16 @@ class CloudClipboardPanelView @JvmOverloads constructor(
     init {
         applyThemeBackground()
         addView(createHeader(), LayoutParams(LayoutParams.MATCH_PARENT, dp(48)))
+        imageStripScroll.addView(
+            imageStrip,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+        )
+        content.addView(
+            imageStripScroll,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(96)).apply {
+                bottomMargin = dp(8)
+            }
+        )
         scrollView.addView(
             content,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
@@ -53,6 +76,47 @@ class CloudClipboardPanelView @JvmOverloads constructor(
             }
         )
         showLoading()
+        renderImages(emptyList())
+    }
+
+    /** 刷新本地剪贴板图片缩略图条；空列表时整条隐藏。 */
+    fun renderImages(entries: List<ClipboardImageHistory.Entry>) {
+        imageStrip.removeAllViews()
+        imageStripScroll.visibility = if (entries.isEmpty()) View.GONE else View.VISIBLE
+        entries.forEach { entry -> imageStrip.addView(createImageThumb(entry)) }
+    }
+
+    private fun createImageThumb(entry: ClipboardImageHistory.Entry): View {
+        val size = dp(80)
+        val container = FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginEnd = dp(8)
+            }
+            background = roundedBackground(
+                fillColor = if (isDarkMode()) 0xFF2A3138.toInt() else 0xFFF3F5F8.toInt(),
+                strokeColor = if (isDarkMode()) 0xFF3E4852.toInt() else 0xFFD7DCE2.toInt()
+            )
+            clipToOutline = true
+            setOnClickListener { callback?.onImageSelected(entry) }
+            setOnLongClickListener {
+                callback?.onImageDelete(entry)
+                true
+            }
+        }
+        val imageView = ImageView(context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        runCatching {
+            val file = entry.file(context)
+            val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            if (bitmap != null) imageView.setImageBitmap(bitmap)
+        }
+        container.addView(imageView)
+        return container
     }
 
     fun setLoading(loading: Boolean) {
