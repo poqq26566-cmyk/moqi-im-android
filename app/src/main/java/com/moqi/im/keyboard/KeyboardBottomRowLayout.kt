@@ -18,7 +18,7 @@ object KeyboardBottomRowLayout {
         QWERTY(
             PREF_QWERTY_ORDER,
             "26 键",
-            listOf(KEY_SYMBOL, KEY_NUMBER, KEY_COMMA, KEY_SPACE, KEY_PERIOD, KEY_MODE, KEY_ENTER)
+            listOf(KEY_SYMBOL, KEY_NUMBER, KEY_COMMA, KEY_LANGUAGE, KEY_SPACE, KEY_PERIOD, KEY_MODE, KEY_ENTER)
         ),
         NUMBER(
             PREF_NUMBER_ORDER,
@@ -66,6 +66,7 @@ object KeyboardBottomRowLayout {
     }
 
     fun displayLabel(id: String): String = when (id) {
+        KEY_LANGUAGE -> "🌐"
         KEY_SYMBOL -> "符"
         KEY_NUMBER -> "123"
         KEY_COMMA -> "，"
@@ -81,13 +82,18 @@ object KeyboardBottomRowLayout {
         else -> id
     }
 
-    fun qwertyRow(context: Context, chinese: Boolean): List<KeyDefinition> =
+    fun qwertyRow(context: Context, chinese: Boolean, schemaLabel: String? = null): List<KeyDefinition> =
         order(context, Row.QWERTY).map { id ->
             when (id) {
+                KEY_LANGUAGE -> KeyDefinition("🌐", KeyCode.LANGUAGE_SWITCH, 1f)
                 KEY_SYMBOL -> KeyDefinition("符", KeyCode.SYMBOL_LAYOUT, 1f)
                 KEY_NUMBER -> KeyDefinition("123", KeyCode.NUMBER_LAYOUT, 1f)
                 KEY_COMMA -> KeyDefinition(if (chinese) "，" else ",", KeyCode.COMMA, 1f)
-                KEY_SPACE -> KeyDefinition(spaceBarLabel(if (chinese) "空格" else "Space"), KeyCode.SPACE, 5.1f)
+                KEY_SPACE -> KeyDefinition(
+                    spaceBarLabel(schemaLabel?.takeIf { it.isNotBlank() } ?: if (chinese) "空格" else "Space"),
+                    KeyCode.SPACE,
+                    4.1f
+                )
                 KEY_PERIOD -> KeyDefinition(if (chinese) "。" else ".", KeyCode.PERIOD, 1f)
                 KEY_MODE -> KeyDefinition("中/英", KeyCode.MODE_SWITCH, 1.75f)
                 KEY_ENTER -> KeyDefinition("↵", KeyCode.ENTER, 1.3f)
@@ -129,6 +135,7 @@ object KeyboardBottomRowLayout {
     private fun spaceBarLabel(base: String): String =
         if (BuildConfig.VOICE_INPUT_ENABLED) "$base 🎤" else base
 
+    private const val KEY_LANGUAGE = "language"
     private const val KEY_SYMBOL = "symbol"
     private const val KEY_NUMBER = "number"
     private const val KEY_COMMA = "comma"
