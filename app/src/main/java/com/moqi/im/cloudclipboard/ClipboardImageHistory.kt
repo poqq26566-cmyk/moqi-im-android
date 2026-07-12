@@ -18,7 +18,7 @@ import java.io.FileOutputStream
  * 本地剪贴板图片历史。
  *
  * 监听系统剪贴板（[ClipboardManager.OnPrimaryClipChangedListener]），当检测到复制的内容
- * 是图片（image/* MIME 或带图片 [Uri] 的 [ClipData.Item]）时，把图片落盘到应用私有缓存目录
+ * 是图片（image MIME 或带图片 [Uri] 的 [ClipData.Item]）时，把图片落盘到应用私有缓存目录
  * （通过 [FileProvider] 暴露为可被目标输入框读取的 content:// Uri），并维护一份历史列表
  * （SharedPreferences 持久化，最多保留 [MAX_ITEMS] 张，超出自动清理最旧的文件）。
  *
